@@ -1,0 +1,8 @@
+{
+  "name": "Canal Dark",
+  "description": "Estúdio editorial local para transformar notícias verificáveis em YouTube Shorts 9:16 com dossiê de fontes, roteiro Gemini, mídia licenciada e prévia com avatar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

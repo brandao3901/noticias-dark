@@ -1,0 +1,300 @@
+# Especificação: fluxo automatizado de notícias para YouTube Shorts
+
+**Estado:** em implementação incremental, com validação do app a cada etapa  
+**Versão:** 0.1  
+**Data:** 20/11/2026
+
+## 1. Objetivo
+
+Definir um sistema local para Windows que transforme notícias recentes em vídeos verticais curtos, com roteiro apoiado em fontes verificáveis, revisão por dois modelos quando houver acesso gratuito, busca de mídia reutilizável, narração em português e montagem automatizada. A primeira entrega deve produzir arquivos prontos para revisão e publicação; publicação automática fica fora do escopo inicial.
+
+## 2. Princípios do produto
+
+- Não publicar automaticamente conteúdo jornalístico gerado por IA na primeira versão.
+- Cada afirmação factual do roteiro deve apontar para uma fonte consultável e recente.
+- Preservar a proveniência da mídia (URL, autor, licença, atribuição e data de captura).
+- Limitar chamadas de modelos à cota gratuita ou a créditos explicitamente disponíveis; nunca permitir cobrança automática.
+- Separar fatos confirmados, alegações e incertezas. Se a notícia não puder ser corroborada, não gerar vídeo.
+- Usar apenas imagens e vídeos com licença compatível com o uso pretendido; acervo gratuito não significa uso irrestrito.
+
+## Plano de implementação etapa por etapa
+
+Cada etapa altera a especificação e o app em uma entrega pequena. Após cada alteração, compilar o Angular, abrir o app desktop e conferir a interface e o fluxo implementado antes de avançar.
+
+1. **Entrada de pauta por URL (concluída):** cadastrar link e título opcional, validar URL, evitar duplicatas, salvar localmente e listar pautas em rascunho.
+2. **Verificação inicial por APIs (em andamento):** pesquisar checagens já publicadas pela Google Fact Check Tools API e localizar cobertura jornalística recente pelo GDELT DOC API. Mostrar os links e explicar que cobertura/ausência de checagem não prova veracidade. Guardar a chave Google em variável de ambiente; permitir GDELT sem chave.\n3. **Descoberta de notícias:** definir editorias e integrar fontes RSS/API permitidas, com atualização e deduplicação.
+4. **Dossiê de fontes:** recuperar e exibir as fontes e trechos acessíveis, com datas e proveniência.
+5. **Roteiro inicial:** preparar roteiro em cenas usando Gemini dentro da cota gratuita, mantendo referências por afirmação.
+6. **Validação editorial:** adicionar revisão Grok somente quando houver crédito gratuito, com fallback para revisão humana.
+7. **Seleção de imagens e vídeos:** buscar acervos aprovados, filtrar licenças e permitir troca por cena.
+8. **Narração:** integrar o fluxo pt-BR do Clipchamp conforme a etapa assistida especificada.
+9. **Montagem:** renderizar Short 9:16 com FFmpeg, áudio e legendas.
+10. **Controle de qualidade e arquivo:** conferir o MP4 e salvar o pacote e manifesto de direitos.
+## 3. Usuário e resultado
+
+O usuário escolhe uma editoria e uma notícia, ou inicia uma busca de notícias do dia. O sistema prepara uma pauta, fontes, roteiro, plano de cenas, narração, legendas e MP4 9:16. O usuário revisa o pacote e aprova, corrige ou descarta antes de publicar.
+
+## 4. Fluxo principal
+
+1. **Descoberta:** obter notícias por RSS/API/fontes jornalísticas configuráveis. Guardar título, veículo, autor, data, URL e trecho relevante. Não usar vídeos do YouTube como material de origem por padrão.
+2. **Seleção:** deduplicar por URL/título e pontuar atualidade, relevância, diversidade de fontes e potencial de explicação em até 60 segundos. Mostrar a pauta e as fontes antes de redigir.
+3. **Dossiê:** recuperar texto acessível das fontes permitidas, preservar trechos e URLs, e extrair fatos, datas, nomes e números. Preferir pelo menos duas fontes independentes para afirmações centrais; registrar quando só houver uma.
+4. **Roteiro (Gemini):** gerar roteiro em português do Brasil, 90–140 palavras como ponto de partida, com gancho, contexto, desenvolvimento, ressalva de incerteza quando aplicável e encerramento. A saída é estruturada por cena e inclui referências por afirmação.
+5. **Validação (Grok):** fazer revisão adversarial do roteiro contra o dossiê fornecido: marcar alegações sem fonte, divergências, datas inconsistentes, exageros, inferências apresentadas como fatos e risco de desatualização. Grok não deve ser tratado como fonte jornalística nem como verificador independente da web se não receber fontes verificáveis.
+6. **Decisão:** aceitar automaticamente apenas quando não houver falha factual crítica e o score interno passar o limiar configurável. Caso contrário, pedir correção ao Gemini uma vez e repetir a validação; persistindo problema, colocar em revisão humana.
+7. **Planejamento visual:** quebrar o roteiro em cenas de 3–7 segundos; criar termos de busca em português e inglês e procurar primeiro mídia contextual em acervos gratuitos. A mídia ilustrativa deve ser claramente distinguível de imagens documentais do evento.
+8. **Licenças e seleção:** filtrar por licença/termos, orientação, duração, resolução e relevância. Salvar créditos e URL da página do ativo. Bloquear mídia sem licença/proveniência legível. Oferecer substituição manual por cena.
+9. **Narração Windows:** produzir voz em pt-BR usando Clipchamp Text-to-Speech, ferramenta incluída no ecossistema Windows/Microsoft. Como não há API pública documentada para automação de geração/exportação do Clipchamp, o MVP deve prever uma etapa assistida para criar/exportar a narração WAV/MP3; a montagem subsequente é automática. Investigar acessibilidade de automação da interface sem depender de coordenadas frágeis. Se for exigida automação 100% sem interação, a decisão sobre motor de voz deverá ser revista antes da implementação.
+10. **Montagem:** FFmpeg cria vídeo 1080×1920, 30 fps, cenas com enquadramento vertical, narração, trilha opcional de licença adequada, legendas sincronizadas, atribuições necessárias e tela final/identificação do canal.
+11. **Controle de qualidade:** validar duração, dimensões, áudio presente, sincronismo, legibilidade/safe zones, ausência de tela preta e existência dos metadados de licença. Gerar prévia e pacote final para aprovação humana.
+12. **Arquivo:** salvar vídeo, roteiro, dossiê e referências, lista de ativos/licenças, legendas SRT/VTT, thumbnail e relatório QC em diretório por pauta.
+
+## 5. Requisitos funcionais
+
+- **RF-01:** selecionar editorias, idioma pt-BR, duração-alvo e fontes de notícias permitidas.
+- **RF-02:** exibir fontes primárias e secundárias usadas e a data/hora de consulta.
+- **RF-03:** gerar roteiro com afirmações vinculadas a IDs de fonte, em formato estruturado.
+- **RF-04:** revisar roteiro via Gemini e, se disponível sem custo, validar com Grok; registrar prompts, modelo e status da validação sem expor chaves.
+- **RF-05:** interromper chamadas ao atingir limites, receber 429, ou encontrar custo estimado não zero quando o modo gratuito estiver ativo.
+- **RF-06:** permitir edição manual de texto e cenas antes da renderização final.
+- **RF-07:** pesquisar Pexels e Wikimedia Commons inicialmente; provedores devem ser adaptadores substituíveis. Pixabay e Internet Archive podem entrar após revisão individual das condições de API/licenças.
+- **RF-08:** manter ficha de direitos por ativo; rejeitar ativos sem dados suficientes.
+- **RF-09:** gerar/exportar narração com fluxo Clipchamp assistido no MVP e importar o áudio para montagem.
+- **RF-10:** renderizar MP4 vertical H.264/AAC com legendas e metadados do pacote.
+- **RF-11:** gerar relatório de QC com erros bloqueantes e avisos.
+- **RF-12:** exigir aprovação humana antes de qualquer publicação.
+- **RF-13:** pesquisar checagens anteriores via Google Fact Check Tools API (opcional, exige chave) e cobertura de até três dias via GDELT DOC API; exibir links, provedor, horário e estado de cada consulta.
+- **RF-14:** nunca tratar resultado zero, cobertura jornalística ou saída de modelo como prova automática; manter status “sem evidência suficiente” e revisão humana para alegações não confirmadas.
+
+## 6. Requisitos não funcionais
+
+- Windows 11 como ambiente inicial; execução local, sem servidor obrigatório.
+- Segredos em variáveis de ambiente/armazenamento seguro do sistema, nunca em arquivos versionados ou logs.
+- Cache de respostas e mídia, deduplicação e retentativas com backoff para reduzir consumo e respeitar cotas.
+- Registro auditável de pauta, fontes, alterações editoriais, versões do roteiro, ativos/licenças e render.
+- Resiliência a indisponibilidade de um provedor: pausar ou usar modo de revisão humana, sem fabricar fatos.
+- A saída deve permanecer editável: configuração por canal, templates e cenas em arquivos declarativos.
+
+## 7. Limites gratuitos e política de custo
+
+### Gemini
+
+Usar a Gemini Developer API/AI Studio no nível gratuito, em modelos que efetivamente estejam liberados na conta e região. As cotas são por modelo e podem mudar; consultar os limites vigentes e o painel do projeto durante a implementação. Não fixar números de RPM/RPD no código. Implementar limitador configurável, cache, tratamento de 429 e opção de desativar o provedor.
+
+### Grok / xAI
+
+A documentação pública consultada descreve API por consumo, créditos pré-pagos/faturamento e limites por equipe/modelo; não confirma um nível gratuito permanente. O fluxo deve:
+
+- verificar saldo/créditos e custo estimado antes de chamar a API, quando a API disponibilizar esses dados;
+- operar em **modo gratuito estrito**: se não houver crédito promocional explicitamente concedido e válido, não chamar;
+- desabilitar faturamento pós-pago e manter limite de gasto em zero quando possível;
+- oferecer alternativa sem cobrança: checklist determinístico + revisão humana, sem alegar que isso equivale a uma validação por Grok.
+
+O acesso gratuito ao chat do Grok não implica acesso gratuito à API. A oferta promocional pode depender de elegibilidade, país e compartilhamento de dados; não deve ser pressuposta.
+
+## 8. Acervos de mídia e direitos
+
+- **Pexels:** API de busca de fotos/vídeos; requer chave e sujeita-se aos termos da API. Há limites padrão e possibilidade de elevação gratuita sujeita a aprovação/atribuição adequada. A licença Pexels permite vários usos gratuitos, mas tem restrições; registrar a versão dos termos consultada.
+- **Wikimedia Commons:** ampla variedade de mídia em domínio público ou licenças livres. Cada arquivo tem seus próprios requisitos de atribuição, compartilhamento pela mesma licença ou outras condições; analisar a página individual e preservar o crédito.
+- Não tratar mídia de banco como prova do acontecimento noticiado. Preferir ilustrações contextuais ou mídia oficial licenciada para documentar fatos específicos.
+- Checar direitos de imagem, marcas, privacidade e regras editoriais; licenciamento do arquivo não resolve todos esses direitos.
+
+## 9. Avaliação de projetos open source
+
+### Candidato de base: AuraContent
+
+O repositório [Auracontent/auracontent](https://github.com/Auracontent/auracontent) é o candidato mais completo encontrado para servir de referência/base de pipeline: documenta roteiro com LLM, fontes para fatos, provedores múltiplos, mídia de Pexels/Pixabay/Wikimedia/Europeana/Internet Archive, composição FFmpeg, legendas, áudio e tratamento de limites. A documentação também inclui publicação via serviços externos, que deve ficar desativada no MVP.
+
+**Limitações para este caso:** demonstra TTS próprio (Gemini TTS/edge-tts) e automação de execução em GitHub Actions; não satisfaz diretamente o requisito de voz do Windows/Clipchamp. A validação jornalística descrita usa Wikipedia como base, insuficiente como única fonte de notícias atuais. A camada de publicação usa serviço de terceiros. Antes de adotar código, conferir licença, atividade recente, segurança/dependências e executar uma prova de conceito local.
+
+### Alternativas
+
+- [gyoridavid/short-video-maker](https://github.com/gyoridavid/short-video-maker): geração de Shorts via texto, TTS, captions, vídeos de fundo e API/MCP. Mais enxuto para composição, mas menos adequado para fluxo de notícias com dossiê e validação editorial.
+- [Chamanrajragu/purffle-shorts](https://github.com/Chamanrajragu/purffle-shorts): amplo conjunto de recursos para Shorts, incluindo Gemini, mídia e publicação; requer avaliação cuidadosa de maturidade, licença, fontes e arquitetura antes de servir como base.
+- [sahandghavidel/ai-video-editor](https://github.com/sahandghavidel/ai-video-editor): workspace extenso para edição, geração e dubbing, mas inclui mais serviços/componentes do que o MVP precisa e não resolve a integração Clipchamp sem adaptação.
+
+### Recomendação
+
+Adotar **AuraContent como referência principal e candidato à reutilização seletiva**, não como dependência fechada de ponta a ponta. Separar o núcleo editorial (dossiê, rastreabilidade e decisão humana) do motor de composição. Reutilizar FFmpeg e conectores de mídia após conferir licença e código; criar adaptador próprio para o roteiro Gemini/Grok e para o passo de narração Windows. Se a prova de conceito demonstrar que a integração exige contornar limites ou automatizar uma UI instável, manter a montagem em FFmpeg e assumir narração Clipchamp assistida.
+
+## 10. Arquitetura proposta
+
+- **Interface local:** fila de pautas, leitor do dossiê, editor de roteiro/cenas, estado das cotas e tela de aprovação.
+- **Orquestrador:** máquina de estados persistida por pauta (DISCOVERED → SOURCED → DRAFTED → REVIEWED → ASSETS_READY → VOICE_READY → RENDERED → APPROVED/REJECTED).
+- **Adaptadores:** fontes de notícias; Gemini; xAI; acervos; voz Windows/Clipchamp; FFmpeg.
+- **Armazenamento:** SQLite para estado/metadados e diretórios locais para arquivos; preservar manifesto JSON por vídeo.
+- **Renderizador:** FFmpeg com templates declarativos e fontes/recursos locais.
+- **Observabilidade:** logs sem segredos, custo/uso reportado quando disponível, erros recuperáveis e histórico de ações.
+
+## Regras da verificação automatizada
+
+- Google Fact Check pesquisa apenas alegações já checadas por veículos; se não houver resultado, isso não significa que a alegação seja verdadeira.
+- GDELT localiza matérias recentes e ajuda a medir repercussão; não atribui selo de verdade.
+- Cada resultado precisa exibir título, domínio, URL e data disponível. A matéria de origem e declarações oficiais continuam prioritárias.
+- Segredos como a chave Google ficam no ambiente do processo Electron, nunca no renderer, em localStorage, no pacote do app ou nos logs.
+- O app apresenta status parcial quando uma API não está configurada ou indisponível, sem ocultar a limitação.
+
+## 11. Critérios de aceite do MVP
+
+1. Um usuário consegue iniciar uma pauta por URL ou selecionar notícia encontrada, e o sistema mantém as fontes usadas.
+2. O roteiro mostra vínculo entre cada afirmação e as fontes do dossiê; falhas críticas bloqueiam render final.
+3. Gemini usa apenas a cota gratuita; limites e erros suspendem chamadas sem loop agressivo.
+4. Grok só é chamado quando créditos gratuitos explícitos estiverem ativos; sem eles, o sistema informa que a revisão Grok foi omitida e segue para revisão humana.
+5. A busca de mídia retorna ativos com página original e dados de licença; itens sem licença identificada são bloqueados.
+6. Narração pt-BR pode ser criada no Clipchamp e importada pelo fluxo assistido sem retrabalho na montagem.
+7. O sistema renderiza MP4 9:16, legendas SRT e manifesto de fontes/ativos, e informa erros de QC.
+8. Nenhum vídeo é publicado sem aprovação humana; a publicação não faz parte do MVP.
+
+9. A verificação automática mostra resultados do Fact Check (quando configurado) e até dez resultados GDELT dos últimos três dias, ou informa claramente quando não há resultado/serviço.
+
+## 12. Fora do escopo do MVP
+
+- Publicação/agendamento automático no YouTube, TikTok ou outras redes.
+- Clonagem de voz, imitação de pessoas reais ou avatar sintético.
+- Captura/redistribuição de trechos de telejornais, vídeos de terceiros ou conteúdo de YouTube sem licença específica.
+- Prometer verificação factual automática infalível.
+- Geração de vídeo por modelos pagos ou geração de imagens como requisito central.
+
+## 13. Riscos e decisões a confirmar antes da implementação
+
+- **Automação do Clipchamp:** TTS existe e é gratuito, mas não há API pública documentada para integrá-lo como serviço headless. O MVP assume uma etapa assistida. Se a exigência for zero interação, será necessário escolher um motor diferente ou aceitar uma integração de interface mais frágil.
+- **Acesso Grok gratuito:** não garantido. O sistema é funcional sem Grok via revisão humana, mas isso muda o requisito de validação automática dupla.
+- **Cotas Gemini:** variáveis e sujeitas a alteração; números devem ser lidos do console/documentação no momento da construção.
+- **Direitos de mídia:** os termos do acervo e a licença individual podem mudar; o manifesto de cada vídeo precisa guardar evidência suficiente para auditoria.
+- **Open source:** a recomendação de AuraContent é preliminar. A adoção de dependências deve aguardar auditoria de licença, estado do projeto, segurança e compatibilidade com Windows.
+
+## 14. Referências consultadas
+
+- Google Fact Check Tools — [Claims Search](https://developers.google.com/fact-check/tools/api/reference/rest/v1alpha1/claims/search) e [visão geral da API](https://developers.google.com/fact-check/tools/api/).
+- GDELT Project — [DOC 2.0 API](https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/) e [dados/API em tempo real](https://gdeltproject.org/data.html).
+- Google Gemini API — [preços e níveis gratuitos](https://ai.google.dev/gemini-api/docs/pricing) e [limites de taxa](https://ai.google.dev/gemini-api/docs/rate-limits).
+- xAI — [preços da API](https://docs.x.ai/developers/pricing), [limites](https://docs.x.ai/developers/rate-limits) e [FAQ de faturamento](https://docs.x.ai/developers/faq/billing).
+- Microsoft — [Clipchamp: texto para fala](https://support.microsoft.com/en-us/clipchamp/how-to-use-the-text-to-speech-feature) (documenta que o recurso usa Azure AI Speech e que limites de caracteres variam por idioma).
+- Pexels — [documentação da API](https://www.pexels.com/api/documentation/), [licença](https://www.pexels.com/license/) e [termos](https://www.pexels.com/terms-of-service/).
+- Wikimedia Commons — [reutilização de conteúdo](https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia/en).
+- Projetos open source — [AuraContent](https://github.com/Auracontent/auracontent), [Short Video Maker](https://github.com/gyoridavid/short-video-maker), [Purffle Shorts](https://github.com/Chamanrajragu/purffle-shorts), [AI Video Editor](https://github.com/sahandghavidel/ai-video-editor).
+
+
+
+
+## 15. Pesquisa completa por link e monitoramento de veículos
+
+- Ao colar o link, o usuário escolhe entre apenas adicionar a pauta ou **Adicionar e pesquisar matéria**.
+- O app tenta extrair título, descrição e texto disponível no HTML/JSON-LD da matéria. Sites que exigem login, assinatura ou renderização JavaScript podem não expor o texto; nesse caso, a busca continua com o título da pauta e a limitação aparece na tela.
+- O tema extraído é consultado no GDELT para cobertura recente e para páginas indexadas que mencionem debate, reação, opinião ou repercussão. Esses resultados não equivalem a uma busca completa por comentários ou postagens sociais.
+- O Google Fact Check procura checagens já publicadas quando a chave está configurada.
+- O app consulta feeds públicos de editorias/perfis editoriais de g1, Folha de S.Paulo, UOL, R7, Metrópoles, Metrópoles Celebridades, Metrópoles Entretenimento e Gente (iG). O resultado traz veículo, editoria, data disponível e link original.
+- Feeds e APIs podem falhar independentemente; mostrar quantos feeds responderam e manter os demais resultados parciais.
+- Os feeds representam publicações nos canais editoriais dos veículos. Não são leitura direta de postagens de Instagram/X/TikTok nem de comentários; integrar APIs dessas redes exige credenciais e respeitar limites/termos específicos.
+- A extração do link ocorre no processo local, com bloqueio de esquemas e destinos de rede locais, limite de tamanho, timeout e validação de redirecionamentos. O texto consultado não é enviado ao Google Fact Check; a consulta usa o título do assunto.
+- Nenhum achado deve ser apresentado como prova automática. Preservar atribuição e revisão humana.
+
+## 16. Narração e avatar apresentador
+
+### Experiência desejada
+
+- Cada Short aprovado terá uma faixa de narração em português brasileiro gerada a partir do roteiro aprovado. A narração será a trilha principal de voz; música e efeitos ficarão em volume inferior e com ducking durante a fala.
+- Um avatar apresentador fictício aparecerá no vídeo contando as notícias, com movimento de boca sincronizado ao áudio e expressões/gestos discretos nos pontos definidos pelo roteiro.
+- O avatar poderá abrir a notícia, aparecer em picture-in-picture sobre imagens de apoio licenciadas e voltar no encerramento. O enquadramento deve alternar com os vídeos e imagens de contexto para manter ritmo, sem cobrir informações importantes.
+- A voz do avatar corresponde à narração. O avatar não improvisa fatos nem cria afirmações fora do roteiro aprovado. Expressões e gestos são escolhas de apresentação, não novas evidências.
+- O MVP permite escolher entre avatar ilustrado e personagem de aparência sintética; a composição exata e a transparência/fundo do avatar serão validadas numa prova de conceito antes da implementação completa.
+- Não imitar a voz ou aparência de uma pessoa real sem autorização documentada. O padrão é um personagem fictício claramente apresentado como avatar.
+
+### Pipeline de vídeo
+
+1. Aprovar roteiro, texto de narração, pronúncia de nomes e marcações de cena.
+2. Gerar/importar a faixa de voz pt-BR pelo recurso de texto para fala do Windows/Clipchamp escolhido no MVP e confirmar duração/qualidade.
+3. Animar a boca do avatar sincronizada com essa mesma faixa de áudio; criar as entradas/saídas e gestos por cena.
+4. Montar avatar, vídeos/imagens licenciados, narração, trilha e legendas no renderizador vertical 9:16.
+5. Exibir prévia com controle de volume e revisão humana antes de exportar o MP4 final.
+
+### Projeto open source para prova de conceito
+
+- Candidato prioritário para validação no Windows com AMD: [avatarz](https://github.com/payner35/avatarz), que faz inferência de sincronização labial no navegador via WebAssembly e desenha avatares VRM/GLB com WebGL, sem depender de CUDA. O código declara MIT; o modelo neural declara Apache-2.0. O projeto é muito recente, reporta medições apenas em Mac com Chrome e exige que os arquivos do avatar tenham licença liberada para uso comercial.
+- O primeiro teste local de avatarz usou o classificador HeadAudio de 14 kB, o renderer VRM/WebGL e um arquivo de áudio de demonstração. O avatar carregou e animou; o painel reportou 144 FPS, aproximadamente 0,49 ms de atualização e 1,45 ms por quadro. Esse resultado confirma que a rota leve abre nesta máquina, mas não mede o uso total do PC, uma narração pt-BR, o modelo neural de 101 MB nem a exportação de MP4. O teste automático de sincronização por rajadas curtas não detectou abertura de boca; validar sincronismo com voz pt-BR e saída gravada continua obrigatório.
+- Teste adicional feito em 20/11/2026: a fala pt-BR do Windows foi gravada localmente (voz Microsoft Daniel), convertida para WAV PCM16 mono/24 kHz e usada no teste. A primeira tentativa revelou erro ao decodificar o bloco WAV. O decodificador foi corrigido para validar o cabeçalho/formato, respeitar os limites declarados e disponíveis, decodificar PCM16 explicitamente e exibir falhas de áudio na interface. O WAV de teste também foi regenerado sem metadados auxiliares e a busca é feita sem cache. Na repetição, avatarz gravou 20 s com áudio e o FFmpeg exportou MP4 H.264/AAC vertical 1080×1920, 30 fps. O registro teve 2.648 amostras, média de 132,4 FPS, atualização média de 0,48 ms e quadro de 1,43 ms; `jawOpen` atingiu 0,383, energia de visema 0,126 e `speaking` chegou a 1. O áudio do WebM capturado mediu −37 dB médio e −18,2 dB de pico. **Sincronização confirmada nesta prova técnica**, incluindo quadro exportado com boca aberta durante a fala. O avatar de exemplo Seed-san continua restrito à prova técnica até revisão de licença.
+- Manter [MuseTalk](https://github.com/TMElyralab/MuseTalk) como alternativa se o processamento migrar para GPU compatível; seu fluxo publicado é orientado a CUDA/NVIDIA, então não é a primeira escolha para a RX 5700.
+- Considerar [SadTalker](https://github.com/OpenTalker/SadTalker) como alternativa de animação de retrato a partir de áudio; o repositório indica Apache 2.0 com exceções para componentes de terceiros.
+- Não escolher [Wav2Lip](https://github.com/Rudrabha/Wav2Lip) para vídeos monetizados sem uma autorização comercial específica: o projeto alerta que o uso comercial de seus modelos pré-treinados é proibido.
+- A prova de conceito deve medir sincronização pt-BR, qualidade em 1080x1920, tempo por minuto de vídeo, necessidade de GPU, consumo de memória, recorte/fundo e consistência do personagem. Código open source não garante que cada peso, dataset ou dependência tenha as mesmas condições de uso.
+
+### Critérios de aceite adicionais
+
+10. O MP4 exportado contém narração inteligível pt-BR, legendas sincronizadas e avatar visível com boca sincronizada à narração. **Status: sincronização básica aprovada na prova local e avatar integrado à prévia desktop com HeadAudio; exportação MP4 e legendas sincronizadas no vídeo final continuam pendentes.**
+11. A composição alterna apresentador e imagens de apoio, mantém o avatar fora de áreas essenciais da tela e não cobre as legendas.
+12. O usuário consegue revisar o roteiro e a prévia final; nenhum avatar inventa conteúdo ou publica automaticamente.
+
+## 17. Objetivo principal: alcance e monetização
+
+O produto deve otimizar cada Short para alcançar novos espectadores e ser elegível à monetização. Não prometer viralização nem escolher a duração apenas para preencher o limite permitido. A pauta, o roteiro, o avatar, as imagens e a edição devem acrescentar contexto original à notícia e respeitar direitos e políticas do YouTube.
+
+### Sinais de pauta e roteiro
+
+- Priorizar assunto recente com evidência de interesse crescente, repercussão em mais de uma fonte e relevância clara para o público brasileiro.
+- No início do roteiro, apresentar rapidamente o fato e a razão para o espectador continuar assistindo; em seguida, entregar contexto, evidências e o que ainda não se sabe. Evitar suspense enganoso, exagero e alegações sem fonte.
+- O avatar e a edição precisam reforçar o entendimento da notícia. Não repetir a mesma composição e texto de forma mecânica entre vídeos; cada Short deve ter seleção de fontes, explicação e cenas próprias.
+- Pautas e roteiro devem ser avaliados por atualidade, quantidade/independência de fontes, interesse crescente, clareza, potencial de retenção, segurança editorial e elegibilidade para anunciantes. A nota ajuda a priorizar; não representa previsão garantida de visualizações.
+
+### Duração e aprendizado
+
+- O renderizador permitirá Shorts verticais de até três minutos.
+- Na prova de conceito, produzir uma versão curta de 45–60 segundos e uma versão expandida de 90–150 segundos para pautas que realmente precisem de mais contexto. A duração final deve seguir o material e a retenção observada.
+- Registrar, quando disponíveis no YouTube Analytics, visualizações engajadas, duração média, porcentagem média assistida, espectadores que continuaram assistindo em vez de deslizar, inscritos obtidos e receita estimada.
+- Comparar grupos de vídeos com pautas e formatos semelhantes. Não declarar um vencedor por uma única publicação; não publicar cópias quase idênticas em sequência apenas para testar duração.
+- Usar esses dados para ajustar duração, abertura, velocidade da narração, presença do avatar e ritmo das imagens, mantendo a apuração e a revisão humana.
+
+### Requisitos de monetização
+
+- A elegibilidade depende dos requisitos vigentes do Programa de Parcerias do YouTube e da aceitação dos módulos aplicáveis; duração maior, por si só, não habilita receita.
+- Manter manifesto de direitos por vídeo: origem, licença, atribuição exigida e eventuais restrições de cada música, clipe, foto, voz e modelo.
+- Shorts com mais de um minuto e reivindicação ativa de direitos autorais podem ser bloqueados e ficar inelegíveis para monetização; o QC deve sinalizar o risco e preferir ativos e músicas com licença clara.
+- O roteiro deve trazer narração/editorial própria, fontes atribuídas e contexto. Conteúdo repetitivo, reutilizado sem transformação suficiente ou produzido em massa com templates genéricos pode não ser monetizável.
+- Revisar adequação para anunciantes, privacidade, direito de imagem e correções antes da aprovação. Monetização jamais justifica publicar informação não verificada.
+
+### Critérios de aceite adicionais
+
+13. Cada pauta recebe uma ficha de prioridade editorial com sinais, fontes e limitações; o sistema não promete alcance.
+14. A exportação permite selecionar duração/versão e registra os indicadores de desempenho disponíveis para comparação posterior.
+15. O QC sinaliza ausência de direitos documentados, risco de reivindicação em Shorts acima de um minuto e elementos que possam tornar vídeos repetitivos ou não originais.
+
+## 18. Resultado da prova de conceito local
+
+- A interface Angular agora oferece um roteiro editável, seleção de versão curta/expandida, estimativa de fala e prévia vertical 9:16 com avatar fictício.
+- O botão de reprodução usa a fala do Chromium/Windows; no teste foi selecionada a voz **Microsoft Daniel - Portuguese (Brazil)**. A prévia anima a boca durante a reprodução e permite interromper a fala.
+- Os roteiros de demonstração têm 112 palavras (estimativa de 52 segundos) e 212 palavras (estimativa de 99 segundos), a 130 palavras por minuto. São textos fictícios para avaliação técnica, não notícia e não previsão de desempenho.
+- **Limite desta prova:** o app sincroniza a boca com a energia da fala capturada da própria janela; ainda não gera MP4 nem mede retenção real. A comparação de viralização só poderá ser feita com publicações e dados do YouTube Analytics.
+- Ambiente detectado: Windows, AMD Radeon RX 5700 com 8.151 MB dedicados e voz pt-BR Microsoft Daniel disponível. FFmpeg 9.1 foi instalado e verificado. A prova separada de avatarz executou o renderer VRM/WebGL e HeadAudio sem CUDA; o avatar de exemplo Seed-san foi usado apenas no teste e não pode ser adotado sem revisar suas condições de licença.
+- A primeira tentativa de avatarz falhou porque o fluxo PCM lançava erro ao interpretar o WAV, deixando o avatar sem áudio. O tratamento WAV foi corrigido na prova técnica, e uma nova gravação validou movimento de boca, visemas, fala ativa e faixa audível. O MP4 aprovado para a prova é [vertical, 20 segundos](poc-avatar-rx5700-ptbr-sincronizado.mp4), com H.264/AAC, 1080×1920 e 30 fps.
+- A interface principal foi conectada ao renderer procedural avatarz e ao HeadAudio; a captura da narração é restrita ao áudio do WebFrameMain da própria janela Electron. Sons do Windows e de outros aplicativos ficam excluídos, a captura só começa após ação do usuário e é encerrada ao terminar/interromper a fala, em erro ou ao fechar a tela. Nenhum áudio é enviado para serviços externos.
+- Validação da integração em 20/11/2026: `ng build` concluiu sem erros; a prévia desktop foi aberta, a narração pt-BR Microsoft Daniel foi reproduzida até o fim, a boca do avatar movimentou-se durante a fala e voltou ao estado de repouso ao concluir. Exportação MP4 pelo app, legendas sincronizadas e perfil de desempenho de uma produção completa continuam pendentes.
+
+## 19. Integração do avatar na aplicação desktop
+
+- **Escolha provisória para desenvolvimento e testes:** manter o avatar procedural atual do avatarz e a voz Microsoft Daniel pt-BR disponível no Windows/Chromium. Eles servem para validar o fluxo e não definem a identidade final do canal.
+- **Decisão em aberto para etapa posterior:** permitir substituir/selecionar o avatar e a voz antes da produção final, após avaliar opções, qualidade em português, sincronização, licenças/direitos comerciais e compatibilidade com a RX 5700. Essa escolha não bloqueia a construção e os testes do app.
+- O avatar fictício usa o renderer procedural do avatarz e o classificador HeadAudio, sem adotar o personagem Seed-san usado na prova técnica.
+- Para sincronização, a captura começa somente quando o usuário aciona a narração. O Electron entrega ao app apenas áudio e vídeo do próprio `WebFrameMain`; áudio global do Windows, sons de sistema e áudio de outros aplicativos não entram na captura. `enableLocalEcho` fica desativado.
+- A captura é encerrada quando a narração termina, quando o usuário interrompe, em caso de erro ou quando a tela é desmontada. O áudio permanece local e não é transmitido a serviços externos.
+- A voz continua sendo texto para fala do Chromium/Windows. Avatar e voz atuais são configurações de teste; a integração anima o avatar na prévia do app e não substitui a etapa futura de composição e exportação do vídeo final.
+
+## 20. Geração funcional de roteiro por IA
+
+- Após consultar uma pauta, o usuário pode solicitar um roteiro editável baseado no trecho extraído da matéria, checagens encontradas, cobertura recente e feeds editoriais.
+- O Gemini API (modelo Gemini 3.8 Flash) gera título sugerido, narração, observações para conferência e URLs de fontes que já fazem parte das evidências. O app filtra as URLs devolvidas para manter apenas links recebidos na pesquisa.
+- O Grok API é uma revisão opcional, acionada explicitamente pelo usuário; ele aponta alegações sem apoio no material recebido, divergências entre evidências e cautelas. Essa revisão não é pesquisa independente nem confirmação de verdade. A opção fica desligada por padrão e avisa que a chamada pode consumir créditos.
+- As chaves Gemini e xAI são guardadas localmente usando a criptografia assíncrona do Electron `safeStorage`; a interface não as mostra depois de salvar. A chave Gemini é necessária para roteiros; xAI é opcional.
+- Antes da ação, a interface informa que o trecho da matéria e os resultados serão enviados ao Gemini e, se selecionado, ao serviço xAI. O roteiro nunca é publicado automaticamente e permanece editável para revisão humana.
+- A API retorna uma orientação clara se não houver chave Gemini, se a chave/modelo for inválido, se o limite gratuito for atingido ou se o Grok estiver sem chave/créditos. A disponibilidade da faixa gratuita e seus limites dependem dos provedores.
+- Validação local em 20/11/2026: compilação Angular concluída; a interface desktop apresentou os campos de configuração; os endpoints foram exercitados sem chaves reais; uma chave fictícia foi guardada e removida por `safeStorage`; sem chave Gemini, a API de roteiro respondeu com o estado “configure a chave” sem enviar conteúdo a provedores. A geração real deve ser validada após o usuário configurar uma chave válida.
+
+## 21. Escopo atual da pesquisa e IA
+
+- **Decisão vigente:** deixar o X fora da pesquisa automática e não depender de login do X, API do X ou X Search do Grok.
+- **IA:** usar somente Gemini para pesquisa complementar e geração de roteiros. A chave Gemini continua necessária para a API e deve permanecer criptografada localmente. Remover a revisão Grok e qualquer configuração de chave xAI da interface e do fluxo ativo.
+- **Pesquisa sem login/chave adicional:** abrir o link de matéria que o usuário fornecer quando estiver publicamente acessível; buscar cobertura recente e discussão indexada via GDELT DOC API sem chave; consultar somente feeds RSS públicos dos veículos configurados. Nenhuma fonte de pesquisa além da chave Gemini já salva deve exigir conta ou login.
+- **Pesquisa do Gemini dentro da faixa gratuita:** depois de reunir resultados públicos, usar a ferramenta URL Context do Gemini 3.8 Flash para ler e comparar URLs públicos encontrados, retornando síntese, fatos apoiados, incertezas e fontes recuperadas. URL Context tem uso gratuito segundo a tabela de preços do Gemini, sujeito ao consumo normal de tokens/cotas do modelo. Não ativar Grounding com Google Search: para Gemini 3.8 Flash, a tabela atual marca esse recurso como indisponível no nível gratuito; a busca inicial permanece em GDELT/RSS.
+- **Fontes indisponíveis:** páginas que exigem autenticação, paywall ou JavaScript, respostas 429/timeouts do GDELT e feeds fora do ar devem aparecer como limitações da apuração; não devem interromper as outras fontes.
+- **Checagem:** remover Google Fact Check Tools da pesquisa ativa porque exige chave. Exibir links e datas das matérias encontradas e deixar claro que cobertura, repercussão ou ausência de resultados não confirma nem refuta uma alegação.
+- **Link social:** se o usuário fornecer link do X, não tentar abrir nem raspar publicações. Preservar a pauta e orientar a informar o assunto ou colar um link de matéria pública; a pesquisa continua apenas pelas fontes públicas sem autenticação.
+- **Critério de aceite:** busca por link e termo retorna estados independentes para página de origem, cobertura GDELT e feeds RSS; falha de uma fonte não bloqueia as demais; nenhum campo ou chamada xAI/X/Fact Check aparece no fluxo; Gemini segue gerando roteiro apenas com evidências recebidas e URLs permitidas.
+- A pesquisa do Gemini deve filtrar URLs para excluir X/Twitter e fontes que exijam login, atribuir somente páginas que a ferramenta indique como recuperadas e continuar exibindo os resultados públicos originais quando URL Context falhar.
