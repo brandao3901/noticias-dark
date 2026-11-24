@@ -1,6 +1,7 @@
 {
     "name": "canal-dark",
     "version": "0.0.0",
+    "main": "electron/main.js",
     "scripts": {
         "ng": "ng",
         "dev": "ng serve --host 0.0.0.0 --port 3000",
@@ -8,7 +9,21 @@
         "build": "ng build",
         "watch": "ng build --watch --configuration development",
         "test": "ng test",
-        "lint": "tsc --noEmit -p tsconfig.app.json"
+        "lint": "tsc --noEmit -p tsconfig.app.json",
+        "electron:dev": "npm run build && electron .",
+        "electron:build": "npm run build && electron-builder"
+    },
+    "build": {
+        "appId": "com.canaldark.studio",
+        "productName": "Canal Dark",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "dist/**/*",
+            "electron/**/*",
+            "package.json"
+        ]
     },
     "private": true,
     "dependencies": {
@@ -36,6 +51,8 @@
         "@angular/build": "^22.3.0",
         "@angular/cli": "^22.3.0",
         "@angular/compiler-cli": "^22.3.0",
+        "electron": "^45.4.1",
+        "electron-builder": "^26.18.0",
         "prettier": "^3.8.1",
         "typescript": "~6.0.2"
     }

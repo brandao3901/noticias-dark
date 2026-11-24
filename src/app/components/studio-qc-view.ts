@@ -370,6 +370,9 @@ import { PresenterAvatar } from './presenter-avatar';
                 @if (renderMp4Error()) {
                   <p class="text-xs text-red-300">{{ renderMp4Error() }}</p>
                 }
+                <p class="text-[11px] text-slate-400">
+                  Dica: Para incluir narração profissional no vídeo MP4, importe o arquivo de áudio WAV/MP3 na aba <strong>Mídia e Voz</strong> (seção <em>Fluxo assistido Clipchamp</em>) antes de baixar. A voz do navegador é apenas para teste local em tempo real.
+                </p>
               </div>
             }
           </section>

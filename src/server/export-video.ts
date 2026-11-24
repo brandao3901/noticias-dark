@@ -185,7 +185,6 @@ export async function renderVerticalShortMp4(params: {
         try {
           await execFileAsync('ffmpeg', ffmpegArgs, { timeout: 30_000 });
         } catch {
-          // Fallback para cenário padrão se uma imagem/vídeo remoto vier corrompido
           const fallbackArgs = [
             '-y',
             ...(fallbackImg
@@ -234,8 +233,12 @@ export async function renderVerticalShortMp4(params: {
       ...(hasCustomAudio
         ? ['-i', 'narracao.audio']
         : ['-f', 'lavfi', '-t', String(Math.max(2, totalDuration)), '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100']),
+      '-map',
+      '0:v',
+      '-map',
+      '1:a',
       '-vf',
-      "subtitles=legendas.srt:force_style='Alignment=2,MarginV=75,FontSize=13,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'",
+      "drawtext=text='CANAL DARK · APRESENTADOR VIRTUAL':x=36:y=48:fontsize=22:fontcolor=white@0.85:box=1:boxcolor=black@0.5:boxborderw=6,subtitles=legendas.srt:force_style='Alignment=2,MarginV=75,FontSize=13,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'",
       '-c:v',
       'libx264',
       '-preset',
