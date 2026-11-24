@@ -1,0 +1,55 @@
+{
+    "name": "canal-dark",
+    "version": "0.0.0",
+    "scripts": {
+        "ng": "ng",
+        "start": "ng serve",
+        "build": "ng build",
+        "watch": "ng build --watch --configuration development",
+        "test": "ng test",
+        "desktop": "ng build && electron .",
+        "desktop:dist": "ng build && electron-builder --win nsis"
+    },
+    "private": true,
+    "dependencies": {
+        "@angular/common": "^22.3.0",
+        "@angular/compiler": "^22.3.0",
+        "@angular/core": "^22.3.0",
+        "@angular/forms": "^22.3.0",
+        "@angular/platform-browser": "^22.3.0",
+        "@angular/router": "^22.3.0",
+        "rxjs": "~7.8.0",
+        "tslib": "^2.3.0"
+    },
+    "devDependencies": {
+        "@angular/build": "^22.3.0",
+        "@angular/cli": "^22.3.0",
+        "@angular/compiler-cli": "^22.3.0",
+        "electron": "^45.4.1",
+        "electron-builder": "^26.18.0",
+        "prettier": "^3.8.1",
+        "typescript": "~6.0.2"
+    },
+    "main": "electron/main.cjs",
+    "build": {
+        "appId": "com.canaldark.desktop",
+        "productName": "Canal Dark",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "dist/**/*",
+            "electron/**/*",
+            "package.json"
+        ],
+        "win": {
+            "target": [
+                "nsis"
+            ]
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true
+        }
+    }
+}
