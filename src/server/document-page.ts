@@ -83,9 +83,11 @@ interface Block {
 
 export function buildDocumentPageSvg(
   input: DocumentPageInput,
-  options: { scale?: number } = {},
+  options: { scale?: number; insetTop?: number } = {},
 ): { svg: string; height: number; contentHeight: number } {
   const scale = Math.max(0.8, Math.min(1.6, options.scale ?? 1));
+  // Faixa escura no topo onde entra a tarja do canal.
+  const insetTop = Math.max(0, Math.round(options.insetTop ?? 0));
   const titleSize = Math.round(54 * scale);
   const bodySize = Math.round(30 * scale);
   const highlightSize = bodySize;
@@ -132,9 +134,12 @@ export function buildDocumentPageSvg(
     blocks.reduce((acc, block) => acc + block.lines.length * block.lineHeight + block.gapAfter, 0) +
     Math.round(150 * scale);
   const leftover = 1920 - contentSoFar;
-  if (leftover > 360 && highlightText) {
+  const lastParagraph = paragraphs[paragraphs.length - 1] ?? '';
+  const quoteText =
+    lastParagraph && lastParagraph !== highlightText ? lastParagraph : '';
+  if (leftover > 360 && quoteText) {
     const quoteSize = Math.round(42 * scale);
-    const quoteLines = wrapText(highlightText, quoteSize);
+    const quoteLines = wrapText(quoteText, quoteSize);
     const quoteHeight = quoteLines.length * Math.round(quoteSize * 1.3);
     const spacer = Math.max(30, leftover - quoteHeight - Math.round(90 * scale));
     blocks.push({
@@ -172,15 +177,15 @@ export function buildDocumentPageSvg(
     (acc, block) => acc + block.lines.length * block.lineHeight + block.gapAfter,
     0,
   );
-  const contentHeight = headerHeight + bodyHeight + Math.round(150 * scale);
+  const contentHeight = headerHeight + bodyHeight + Math.round(150 * scale) + insetTop;
   const height = Math.max(1920, Math.round(contentHeight));
 
   const parts: string[] = [];
   parts.push(`<rect width="${WIDTH}" height="${height}" fill="#0a0d12"/>`);
   // "Folha" clara, com sombra sutil nas bordas.
   parts.push(
-    `<rect x="28" y="28" width="${WIDTH - 56}" height="${height - 56}" rx="18" fill="#f7f5ef"/>`,
-    `<rect x="28" y="28" width="${WIDTH - 56}" height="10" rx="5" fill="#e59a38"/>`,
+    `<rect x="28" y="${28 + insetTop}" width="${WIDTH - 56}" height="${height - 56 - insetTop}" rx="18" fill="#f7f5ef"/>`,
+    `<rect x="28" y="${28 + insetTop}" width="${WIDTH - 56}" height="10" rx="5" fill="#e59a38"/>`,
   );
 
   // Cabeçalho: veículo em âmbar. Domínio comprido empurra a data para o rodapé.
@@ -190,18 +195,18 @@ export function buildDocumentPageSvg(
   const dateInHeader = Boolean(dateLabel) && domain.length <= 16;
 
   parts.push(
-    `<text x="${PADDING}" y="${28 + Math.round(86 * scale)}" font-family="Arial" font-size="${Math.round(28 * scale)}" font-weight="700" letter-spacing="2" fill="#b06512">${escapeXml(domain)}</text>`,
+    `<text x="${PADDING}" y="${28 + insetTop + Math.round(86 * scale)}" font-family="Arial" font-size="${Math.round(28 * scale)}" font-weight="700" letter-spacing="2" fill="#b06512">${escapeXml(domain)}</text>`,
   );
   if (dateInHeader) {
     parts.push(
-      `<text x="${WIDTH - PADDING}" y="${28 + Math.round(86 * scale)}" text-anchor="end" font-family="Arial" font-size="${Math.round(20 * scale)}" fill="#8a8377">${escapeXml(dateLabel)}</text>`,
+      `<text x="${WIDTH - PADDING}" y="${28 + insetTop + Math.round(86 * scale)}" text-anchor="end" font-family="Arial" font-size="${Math.round(20 * scale)}" fill="#8a8377">${escapeXml(dateLabel)}</text>`,
     );
   }
   parts.push(
-    `<rect x="${PADDING}" y="${28 + Math.round(112 * scale)}" width="${INNER_WIDTH}" height="2" fill="#dcd6c8"/>`,
+    `<rect x="${PADDING}" y="${28 + insetTop + Math.round(112 * scale)}" width="${INNER_WIDTH}" height="2" fill="#dcd6c8"/>`,
   );
 
-  let cursorY = 28 + headerHeight + Math.round(40 * scale);
+  let cursorY = 28 + insetTop + headerHeight + Math.round(40 * scale);
   for (const block of blocks) {
     const color =
       block.kind === 'title'
@@ -245,14 +250,18 @@ export function buildDocumentPageSvg(
  * Rasteriza a página. Texto curto ganha escala para a folha não ficar vazia;
  * texto longo cresce em altura (é o que permite a rolagem).
  */
-export function renderDocumentPage(input: DocumentPageInput): DocumentPageRendered {
+export function renderDocumentPage(
+  input: DocumentPageInput,
+  options: { insetTop?: number } = {},
+): DocumentPageRendered {
+  const insetTop = Math.max(0, Math.round(options.insetTop ?? 0));
   let scale = 1;
-  let built = buildDocumentPageSvg(input, { scale });
+  let built = buildDocumentPageSvg(input, { scale, insetTop });
 
   // Texto curto: sobe a escala até a folha ficar preenchida.
   while (built.contentHeight < 1800 && scale < 1.45) {
     const next = Number((scale + 0.1).toFixed(2));
-    const candidate = buildDocumentPageSvg(input, { scale: next });
+    const candidate = buildDocumentPageSvg(input, { scale: next, insetTop });
     if (candidate.contentHeight > 2000) break;
     scale = next;
     built = candidate;

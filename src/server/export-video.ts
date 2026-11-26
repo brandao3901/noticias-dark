@@ -274,7 +274,7 @@ function buildVideoFilter(params: {
     // libass dimensiona o SRT sobre PlayResY=288. No modo documento a legenda é
     // menor e mais baixa: o texto do papel precisa dominar a tela.
     const style = params.compactCaptions
-      ? 'Alignment=2,MarginV=22,FontSize=7,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'
+      ? 'Alignment=2,MarginV=6,FontSize=7,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'
       : 'Alignment=2,MarginV=48,FontSize=12,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000';
     filters.push(`subtitles=legendas.srt:force_style='${style}'`);
   }
@@ -1008,7 +1008,7 @@ export async function renderVerticalShortMp4(params: {
 
     params.onProgress?.('render', 88, 'Renderizando o vídeo final…');
     try {
-      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent && !documentMode, true), {
+      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent, true), {
         cwd: workDir,
         timeout: 180_000,
       });
