@@ -3,6 +3,7 @@ import type {
   GdeltArticle,
   MediaAsset,
 } from '../app/models/studio.models';
+import { WEB_USER_AGENT, WIKIMEDIA_USER_AGENT } from './http';
 import { safeFetchWithRedirectGuard, validateSafePublicUrl } from './ssrf-guard';
 
 const NAMED_HTML_ENTITIES: Record<string, string> = {
@@ -104,12 +105,57 @@ function extractMetaTag(html: string, names: string[]): string {
   return '';
 }
 
+/** Coleta a imagem principal publicada na matéria. */
+function extractArticleImage(
+  html: string,
+  ld: { image?: unknown },
+  baseUrl: string,
+): { imageUrl: string; imageAlt: string; imageCredit: string } | null {
+  const candidates: string[] = [];
+
+  const fromLd = ld.image;
+  if (typeof fromLd === 'string') candidates.push(fromLd);
+  else if (Array.isArray(fromLd)) {
+    for (const item of fromLd) {
+      if (typeof item === 'string') candidates.push(item);
+      else if (item && typeof item === 'object') {
+        const url = (item as Record<string, unknown>)['url'];
+        if (typeof url === 'string') candidates.push(url);
+      }
+    }
+  } else if (fromLd && typeof fromLd === 'object') {
+    const url = (fromLd as Record<string, unknown>)['url'];
+    if (typeof url === 'string') candidates.push(url);
+  }
+
+  candidates.push(
+    extractMetaTag(html, ['og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image']),
+    extractMetaTag(html, ['twitter:image:src']),
+  );
+
+  const imageUrl = candidates
+    .map((value) => (value ?? '').trim())
+    .find((value) => value.startsWith('http://') || value.startsWith('https://'));
+
+  if (!imageUrl) return null;
+
+  return {
+    // Alguns sites publicam URL relativa em og:image; resolve contra a página.
+    imageUrl: new URL(imageUrl, baseUrl).toString(),
+    imageAlt: extractMetaTag(html, ['og:image:alt', 'twitter:image:alt']),
+    imageCredit:
+      extractMetaTag(html, ['credit', 'article:author', 'og:article:author']) ||
+      extractMetaTag(html, ['author']),
+  };
+}
+
 function extractJsonLd(html: string): {
   headline?: string;
   description?: string;
   articleBody?: string;
   author?: string;
   datePublished?: string;
+  image?: unknown;
 } {
   const scripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const match of scripts) {
@@ -143,6 +189,7 @@ function extractJsonLd(html: string): {
             author: authorName || undefined,
             datePublished:
               typeof rec['datePublished'] === 'string' ? rec['datePublished'] : undefined,
+            image: rec['image'],
           };
         }
       }
@@ -220,6 +267,7 @@ export async function extractArticleMetadata(rawUrl: string): Promise<ExtractedS
 
   const html = res.body;
   const ld = extractJsonLd(html);
+  const articleImage = extractArticleImage(html, ld, res.finalUrl || rawUrl);
 
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title =
@@ -270,6 +318,9 @@ export async function extractArticleMetadata(rawUrl: string): Promise<ExtractedS
       status: 'limited',
       limitationNote:
         'Texto completo indisponível (site pode exigir login, assinatura ou renderização JavaScript). Pesquisa prossegue com título e metadados disponíveis.',
+      imageUrl: articleImage?.imageUrl,
+      imageAlt: articleImage?.imageAlt,
+      imageCredit: articleImage?.imageCredit,
     };
   }
 
@@ -284,6 +335,9 @@ export async function extractArticleMetadata(rawUrl: string): Promise<ExtractedS
     publishedAt,
     fetchedAt,
     status: 'ok',
+    imageUrl: articleImage?.imageUrl,
+    imageAlt: articleImage?.imageAlt,
+    imageCredit: articleImage?.imageCredit,
   };
 }
 
@@ -316,7 +370,7 @@ export async function searchGdeltCoverage(query: string): Promise<{
     const res = await fetch(endpoint.toString(), {
       signal: AbortSignal.timeout(8000),
       headers: {
-        'User-Agent': 'CanalDarkEditorial/0.1',
+        'User-Agent': WEB_USER_AGENT,
         Accept: 'application/json',
       },
     });
@@ -399,7 +453,7 @@ function isDerivativeAllowedLicense(licenseText: string, licenseUrl: string): bo
   return true;
 }
 
-const WIKI_UA = 'CanalDarkEditorial/0.1 (https://canaldark.local; contact@canaldark.local)';
+const WIKI_UA = WIKIMEDIA_USER_AGENT;
 
 const NON_PHOTO_RE =
   /\.(svg|djvu|pdf|tif|tiff)$/i;
@@ -471,6 +525,15 @@ function isPhotographicCandidate(titleOrUrl: string): boolean {
   return true;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Casa o token como palavra inteira: "selic" nao pode casar com "selić". */
+function matchesWholeWord(normalizedText: string, token: string): boolean {
+  return new RegExp(`\\b${escapeRegex(token)}\\b`).test(normalizedText);
+}
+
 function scoreAssetCoherence(title: string, query: string): number {
   const normTitle = stripAccentsLower(title);
   const normQuery = stripAccentsLower(query);
@@ -479,11 +542,11 @@ function scoreAssetCoherence(title: string, query: string): number {
 
   let matched = 0;
   for (const tok of tokens) {
-    if (normTitle.includes(tok)) matched++;
+    if (matchesWholeWord(normTitle, tok)) matched++;
   }
 
   let score = (matched / tokens.length) * 10;
-  if (normQuery.length >= 5 && normTitle.includes(normQuery)) {
+  if (normQuery.length >= 5 && matchesWholeWord(normTitle, normQuery)) {
     score += 4;
   }
 
@@ -494,6 +557,150 @@ function scoreAssetCoherence(title: string, query: string): number {
   }
 
   return score;
+}
+
+/**
+ * Coerencia de um ativo com o termo da cena, considerando titulo E descricao.
+ *
+ * A pontuacao textual e a que decide a aceitacao; enquadramento vertical e
+ * resolucao servem apenas como desempate, porque o alvo e sempre 9:16.
+ */
+export function scoreAssetForQuery(asset: MediaAsset, query: string): number {
+  const haystack = `${asset.title} ${asset.description ?? ''}`.trim();
+  return scoreAssetCoherence(haystack, query);
+}
+
+function framingPreference(asset: MediaAsset): number {
+  let bonus = 0;
+  if (asset.orientation === 'vertical') bonus += 1.5;
+  else if (asset.orientation === 'horizontal') bonus -= 0.5;
+
+  const longSide = Math.max(asset.width || 0, asset.height || 0);
+  if (longSide >= 1600) bonus += 1;
+  else if (longSide > 0 && longSide < 900) bonus -= 1;
+
+  return bonus;
+}
+
+/** Conteudo que nao serve como B-roll de noticia (grafico, mapa, logo, print). */
+const NON_PHOTO_CONTENT_RE =
+  /\b(chart|charts|graph|graphs|diagram|diagrams|map|maps|mapa|mapas|logo|logos|flag|flags|bandeira|bandeiras|brasao|coat of arms|seal|emblem|escudo|screenshot|table|tables|tabela|tabelas|statistics|timeline|poster|cartaz|cartoon|caricature)\b/i;
+
+/** Termos que nao descrevem nada fotografavel: nao viram busca de midia. */
+const GENERIC_VISUAL_TOKENS = new Set([
+  'reuniao',
+  'reunioes',
+  'comite',
+  'comites',
+  'economia',
+  'economico',
+  'economica',
+  'inflacao',
+  'juros',
+  'noticia',
+  'noticias',
+  'jornal',
+  'estudio',
+  'cidade',
+  'governo',
+  'politica',
+  'politico',
+  'mercado',
+  'empresa',
+  'empresas',
+  'pessoa',
+  'pessoas',
+  'trabalho',
+  'dinheiro',
+  'edificio',
+  'predio',
+  'sala',
+  'mesa',
+  'documento',
+  'documentos',
+  'papel',
+  'grafico',
+  'mapa',
+  'bandeira',
+  'fiscal',
+  'meta',
+  'indice',
+  'taxa',
+  'taxas',
+  'valor',
+  'preco',
+  'precos',
+  'news',
+  'broadcast',
+  'building',
+  'meeting',
+  'committee',
+  'government',
+  'economy',
+  'economic',
+  'inflation',
+  'market',
+  'business',
+  'report',
+  'press',
+  'media',
+  'office',
+  'room',
+  'people',
+  'person',
+]);
+
+/** Uma busca visual só é útil se nomear algo concreto (não "reunião comitê"). */
+function isUsefulVisualQuery(term: string): boolean {
+  const tokens = tokenizeSignificant(term);
+  if (!tokens.length) return false;
+  return tokens.some((token) => !GENERIC_VISUAL_TOKENS.has(token));
+}
+
+/**
+ * Decide se um ativo pode ilustrar um termo da cena.
+ *
+ * Regras (todas obrigatorias):
+ *  1. TODOS os termos da busca precisam aparecer como palavra inteira;
+ *  2. se a busca tem uma palavra so, ela precisa vir junto de algum termo de
+ *     contexto da cena/pauta — e isso que impede "Selic" de casar com
+ *     "Selic Alaska" ou com o sobrenome "Šelić";
+ *  3. o enquadramento so desempata, nunca salva um casamento ruim.
+ */
+export function evaluateAssetMatch(
+  asset: MediaAsset,
+  term: string,
+  contextTokens: string[],
+): { accepted: boolean; score: number } {
+  // Normaliza a "frase" do ativo para comparar expressão inteira, não palavras soltas.
+  const haystack = stripAccentsLower(`${asset.title} ${asset.description ?? ''}`)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (NON_PHOTO_CONTENT_RE.test(haystack)) return { accepted: false, score: 0 };
+
+  const tokens = tokenizeSignificant(term);
+  if (!tokens.length) return { accepted: false, score: 0 };
+
+  const allPresent = tokens.every((token) => matchesWholeWord(haystack, token));
+  if (!allPresent) return { accepted: false, score: 0 };
+
+  // Nome composto ("Andy Taylor", "Duran Duran") precisa aparecer como
+  // expressão: senão "Andy Taylor" casa com "teatro Taylor & Kent ... Andy
+  // Mabbett" e "Duran Duran" casa com a pintora Dolores Duran.
+  if (tokens.length >= 2 && !haystack.includes(tokens.join(' '))) {
+    return { accepted: false, score: 0 };
+  }
+
+  const contextHits = contextTokens.filter(
+    (token) => !tokens.includes(token) && matchesWholeWord(haystack, token),
+  );
+
+  if (tokens.length === 1 && contextHits.length === 0) {
+    return { accepted: false, score: 0 };
+  }
+
+  const score = 10 + Math.min(4, contextHits.length) * 1.5 + framingPreference(asset);
+  return { accepted: true, score };
 }
 
 function expandEntityQuery(query: string): string {
@@ -603,6 +810,9 @@ async function resolveCommonsFilesByTitles(
       pageUrl: info.descriptionurl,
       mediaUrl: info.url,
       thumbUrl: info.thumburl ?? info.url,
+      description: stripTags(
+        `${meta['ImageDescription']?.value ?? ''} ${meta['Categories']?.value ?? ''}`,
+      ).slice(0, 400),
       author: author.slice(0, 120),
       licenseName,
       licenseUrl: licenseUrl || info.descriptionurl,
@@ -816,6 +1026,9 @@ export async function searchWikimediaMedia(
           pageUrl: info.descriptionurl,
           mediaUrl: info.url,
           thumbUrl: info.thumburl ?? info.url,
+          description: stripTags(
+            `${meta['ImageDescription']?.value ?? ''} ${meta['Categories']?.value ?? ''}`,
+          ).slice(0, 400),
           author: author.slice(0, 120),
           licenseName,
           licenseUrl: licenseUrl || info.descriptionurl,
@@ -892,7 +1105,7 @@ export async function searchInternetArchiveMedia(
   try {
     const res = await fetch(searchUrl.toString(), {
       signal: AbortSignal.timeout(8500),
-      headers: { 'User-Agent': 'CanalDarkEditorial/0.1 (contact@canaldark.local)' },
+      headers: { 'User-Agent': WEB_USER_AGENT },
     });
 
     if (!res.ok) {
@@ -1029,8 +1242,7 @@ export async function searchInternetArchiveMedia(
   }
 }
 
-const STOP_PROPER_WORDS = new Set([
-  'segundo',
+const STOP_PROPER_WORDS = new Set([  'segundo',
   'conforme',
   'após',
   'apos',
@@ -1162,6 +1374,76 @@ const ACRONYM_EXPANSIONS: Record<string, string> = {
   PIX: 'Pix Banco Central',
 };
 
+/** Verbos que abrem manchete e não são nome de ninguém ("Morre Andy Taylor"). */
+const HEADLINE_VERBS = new Set([
+  'morre',
+  'morreu',
+  'diz',
+  'afirma',
+  'revela',
+  'revelou',
+  'confessa',
+  'confessou',
+  'anuncia',
+  'anunciou',
+  'nega',
+  'negou',
+  'processa',
+  'detona',
+  'detonou',
+  'critica',
+  'criticou',
+  'rebate',
+  'rebateu',
+  'responde',
+  'respondeu',
+  'assume',
+  'assumiu',
+  'desabafa',
+  'desabafou',
+  'flagra',
+  'flagrou',
+  'interna',
+  'internou',
+  'opera',
+  'operou',
+  'volta',
+  'voltou',
+  'deixa',
+  'deixou',
+  'ganha',
+  'ganhou',
+  'perde',
+  'perdeu',
+  'faz',
+  'fez',
+  'mostra',
+  'mostrou',
+  'surge',
+  'surgiu',
+  'posa',
+  'posou',
+  'aparece',
+  'apareceu',
+  'comemora',
+  'comemorou',
+  'chora',
+  'chorou',
+  'briga',
+  'brigou',
+  'recusa',
+  'recusou',
+  'confirma',
+  'confirmou',
+]);
+
+/** Remove o verbo de manchete do começo do nome próprio. */
+function stripHeadlineVerb(candidate: string): string {
+  const words = candidate.split(/\s+/);
+  if (words.length < 2) return candidate;
+  return HEADLINE_VERBS.has(stripAccentsLower(words[0])) ? words.slice(1).join(' ') : candidate;
+}
+
 export function extractMentionedNames(text: string): string[] {
   if (!text || !text.trim()) return [];
   const rawHits: Array<{ pos: number; end: number; name: string; isMulti?: boolean }> = [];
@@ -1193,7 +1475,7 @@ export function extractMentionedNames(text: string): string[] {
       startPos += candidate.length - rest.length;
       candidate = rest;
     }
-    const clean = normalizeName(candidate);
+    const clean = normalizeName(stripHeadlineVerb(candidate));
     if (clean.length < 3 || STOP_PROPER_WORDS.has(clean.toLowerCase())) continue;
     coveredSpans.push({ start: startPos, end: endPos });
     rawHits.push({ pos: startPos, end: endPos, name: clean, isMulti: clean.includes(' ') });
@@ -1257,6 +1539,8 @@ export async function autoFillScenesMedia(params: {
   editorial: string;
   kindPreference: 'both' | 'image' | 'video';
   maxPerScene: number;
+  /** Imagens publicadas na própria matéria: entram antes do acervo. */
+  articleAssets?: MediaAsset[];
   scenes: Array<{
     id: string;
     narration: string;
@@ -1272,10 +1556,11 @@ export async function autoFillScenesMedia(params: {
     assets: MediaAsset[];
   }>;
 }> {
-  const maxPerScene = Math.max(1, Math.min(4, params.maxPerScene || 2));
+  const maxPerScene = Math.max(1, Math.min(4, params.maxPerScene || 1));
   const titleNames = extractMentionedNames(params.pautaTitle);
   const queryCache = new Map<string, MediaAsset[]>();
   const globallyUsedIds = new Set<string>();
+  const globallyUsedTitles = new Set<string>();
 
   const runCachedSearch = async (
     query: string,
@@ -1319,88 +1604,105 @@ export async function autoFillScenesMedia(params: {
       }
     }
 
-    // Termos em ordem exata de citação no roteiro (cena primeiro, depois título, depois queries de apoio)
+    // Contexto da cena: serve para exigir um segundo sinal de relevância
+    // quando o termo buscado e uma palavra unica (ex.: "Selic").
+    const contextTokens = Array.from(
+      new Set(
+        tokenizeSignificant(`${params.pautaTitle} ${scene.narration} ${scene.visualQueryPt ?? ''}`)
+          .filter((token) => token.length >= 4),
+      ),
+    ).slice(0, 14);
+
+    // Nomes próprios citados têm prioridade absoluta; as queries visuais do
+    // roteiro entram depois, e só se nomearem algo concreto. A editoria nunca
+    // entra — era ela que puxava imagem de estoque sem relação com a notícia.
     const searchTerms = [
-      ...sceneNames,
-      ...expandedTitleNames,
-      scene.visualQueryPt?.trim(),
-      scene.visualQueryEn?.trim(),
-      params.editorial,
-    ].filter((q): q is string => Boolean(q && q.length >= 2));
+      ...mergedNames,
+      ...[scene.visualQueryPt?.trim(), scene.visualQueryEn?.trim()].filter(
+        (q): q is string => Boolean(q && q.length >= 3 && isUsefulVisualQuery(q)),
+      ),
+    ].filter((q): q is string => Boolean(q && q.length >= 3));
 
     const uniqueTerms: string[] = [];
     const seenTerm = new Set<string>();
     for (const t of searchTerms) {
       const key = t.toLowerCase();
-      if (!seenTerm.has(key)) {
-        seenTerm.add(key);
-        uniqueTerms.push(t);
-      }
-      if (uniqueTerms.length >= Math.max(5, maxPerScene + 2)) break;
+      if (seenTerm.has(key)) continue;
+      seenTerm.add(key);
+      uniqueTerms.push(t);
+      if (uniqueTerms.length >= 4) break;
     }
 
     const chosen: MediaAsset[] = [];
     const chosenIds = new Set<string>();
     const queriesUsed: string[] = [];
 
+    const titleKey = (asset: MediaAsset): string =>
+      stripAccentsLower(asset.title)
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .slice(0, 80);
+
     const addUniqueAsset = (asset: MediaAsset): boolean => {
-      if (chosenIds.has(asset.id)) return false;
+      const key = titleKey(asset);
+      if (chosenIds.has(asset.id) || globallyUsedTitles.has(key)) return false;
       chosenIds.add(asset.id);
       globallyUsedIds.add(asset.id);
+      globallyUsedTitles.add(key);
       chosen.push(asset);
       return true;
     };
 
-    const pickCoherent = (pool: MediaAsset[], term: string, minScore = 0): MediaAsset | null => {
-      const scored = pool
-        .map((a) => ({ asset: a, score: scoreAssetCoherence(a.title, term) }))
-        .filter((x) => x.score >= minScore && !chosenIds.has(x.asset.id));
-      const fresh = scored.find((x) => !globallyUsedIds.has(x.asset.id));
-      return (fresh ?? scored[0])?.asset ?? null;
+    const pickBest = (pool: MediaAsset[], term: string): MediaAsset | null => {
+      const ranked = pool
+        .filter((asset) => !chosenIds.has(asset.id))
+        .map((asset) => {
+          const match = evaluateAssetMatch(asset, term, contextTokens);
+          return { asset, accepted: match.accepted, score: match.score };
+        })
+        .filter((entry) => entry.accepted)
+        .sort((a, b) => b.score - a.score);
+
+      // Prefere um ativo ainda não usado em outra cena; se todos já foram
+      // usados, aceita o melhor (evita repetir imagem no mesmo vídeo).
+      const fresh = ranked.find((entry) => !globallyUsedIds.has(entry.asset.id));
+      return (fresh ?? ranked[0])?.asset ?? null;
     };
 
     const pickOneForTerm = async (term: string): Promise<boolean> => {
       if (params.kindPreference === 'video') {
         const wikiVideos = await runCachedSearch(term, 'wikimedia', 'video');
-        const iaVideos = wikiVideos.length < 2 ? await runCachedSearch(term, 'internet_archive', 'video') : [];
-        const pool = [...wikiVideos, ...iaVideos];
-        const pick = pickCoherent(pool, term, 2) ?? pickCoherent(pool, term, -2);
+        const iaVideos =
+          wikiVideos.length < 2 ? await runCachedSearch(term, 'internet_archive', 'video') : [];
+        const pick = pickBest([...wikiVideos, ...iaVideos], term);
         return pick ? addUniqueAsset(pick) : false;
       }
 
-      if (params.kindPreference === 'both') {
-        const wikiImgs = await runCachedSearch(term, 'wikimedia', 'image');
-        const imgPick = pickCoherent(wikiImgs, term, -1);
-        if (imgPick) return addUniqueAsset(imgPick);
+      const wikiImgs = await runCachedSearch(term, 'wikimedia', 'image');
+      const imgPick = pickBest(wikiImgs, term);
+      if (imgPick) return addUniqueAsset(imgPick);
 
+      // Vídeo só entra quando é muito coerente com o termo.
+      if (params.kindPreference === 'both') {
         const wikiVideos = await runCachedSearch(term, 'wikimedia', 'video');
-        const strongVid = pickCoherent(wikiVideos, term, 7);
-        return strongVid ? addUniqueAsset(strongVid) : false;
+        const strongVideo = pickBest(wikiVideos, term);
+        return strongVideo ? addUniqueAsset(strongVideo) : false;
       }
 
-      const wikiImgs = await runCachedSearch(term, 'wikimedia', 'image');
-      const imgPick = pickCoherent(wikiImgs, term, -1);
-      return imgPick ? addUniqueAsset(imgPick) : false;
+      return false;
     };
 
-    // Passo 1: 1 mídia para cada nome/termo na exata ordem citada na cena
+    // Antes de qualquer acervo: a foto publicada na matéria é a imagem real do
+    // fato. Entra primeiro e ocupa a primeira cena que tiver espaço.
+    for (const asset of params.articleAssets ?? []) {
+      if (chosen.length >= maxPerScene) break;
+      if (addUniqueAsset(asset)) queriesUsed.push('imagem da matéria');
+    }
+
     for (const term of uniqueTerms) {
       if (chosen.length >= maxPerScene) break;
       queriesUsed.push(term);
       await pickOneForTerm(term);
-    }
-
-    // Passo 2: se ainda faltarem slots para atingir maxPerScene, completa na mesma ordem dos termos
-    if (chosen.length < maxPerScene) {
-      for (const term of uniqueTerms) {
-        if (chosen.length >= maxPerScene) break;
-        const backupKind: 'image' | 'video' = params.kindPreference === 'video' ? 'video' : 'image';
-        const pool = await runCachedSearch(term, 'wikimedia', backupKind);
-        for (const candidate of pool) {
-          if (chosen.length >= maxPerScene) break;
-          addUniqueAsset(candidate);
-        }
-      }
     }
 
     results.push({

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Modality, Type } from '@google/genai';
 import type {
   DossierSourceItem,
   EditableScript,
@@ -7,7 +7,56 @@ import type {
 } from '../app/models/studio.models';
 import { isSocialXHost } from './ssrf-guard';
 
-const ACTIVE_GEMINI_MODEL = 'gemini-4-hydrogen';
+const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
+
+/**
+ * Resolvido em tempo de execucao, nao no topo do modulo: `src/server.ts` carrega
+ * o `.env` depois que os imports ja foram avaliados, entao uma constante de modulo
+ * leria o ambiente antes da chave/modelo existirem.
+ */
+export function activeGeminiModel(): string {
+  return (process.env['GEMINI_MODEL'] ?? '').trim() || DEFAULT_GEMINI_MODEL;
+}
+
+// Modelos maiores entram em 503 ("high demand") com frequencia; os "lite"
+// continuam respondendo. A cadeia tenta o modelo configurado e cai para estes.
+const FALLBACK_GEMINI_MODELS = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite'];
+
+function geminiModelChain(): string[] {
+  const primary = activeGeminiModel();
+  return [primary, ...FALLBACK_GEMINI_MODELS.filter((m) => m !== primary)];
+}
+
+function isModelUnavailable(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /503|UNAVAILABLE|overloaded|high demand/i.test(msg);
+}
+
+/**
+ * Executa a chamada no modelo configurado e, se ele estiver sobrecarregado (503),
+ * tenta os fallbacks em sequencia. 429 (cota) nao entra aqui: continua pausando.
+ */
+async function withGeminiModelFallback<T>(
+  run: (model: string) => Promise<T>,
+): Promise<{ value: T; model: string }> {
+  const chain = geminiModelChain();
+  let lastError: unknown = null;
+
+  for (let i = 0; i < chain.length; i++) {
+    try {
+      const value = await run(chain[i]);
+      return { value, model: chain[i] };
+    } catch (err) {
+      lastError = err;
+      if (!isModelUnavailable(err)) throw err;
+      if (i < chain.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1200 * (i + 1)));
+      }
+    }
+  }
+
+  throw lastError;
+}
 
 let quotaPausedUntilMs = 0;
 const urlContextCache = new Map<string, { ts: number; result: GeminiUrlContextResult }>();
@@ -17,7 +66,10 @@ function getGeminiClient(): GoogleGenAI | null {
   if (!apiKey) return null;
   return new GoogleGenAI({
     apiKey,
+    // A API v1 (padrao do SDK) nao conhece aliases como `*-flash-lite-latest`
+    // nem a ferramenta urlContext; a v1beta expoe os dois.
     httpOptions: {
+      apiVersion: 'v1beta',
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -37,7 +89,7 @@ export function getGeminiStatus(): {
     geminiConfigured: Boolean(process.env['GEMINI_API_KEY']?.trim()),
     geminiQuotaPaused: paused,
     geminiCooldownUntil: paused ? new Date(quotaPausedUntilMs).toISOString() : undefined,
-    activeModel: ACTIVE_GEMINI_MODEL,
+    activeModel: activeGeminiModel(),
   };
 }
 
@@ -98,7 +150,7 @@ export async function runGeminiUrlContextAnalysis(
   if (!allowed.length) {
     return {
       status: 'skipped',
-      model: ACTIVE_GEMINI_MODEL,
+      model: activeGeminiModel(),
       summary: 'Nenhuma URL pública elegível disponível para comparação com URL Context.',
       supportedFacts: [],
       uncertainties: [],
@@ -111,7 +163,7 @@ export async function runGeminiUrlContextAnalysis(
   if (quotaPausedUntilMs > Date.now()) {
     return {
       status: 'quota_paused',
-      model: ACTIVE_GEMINI_MODEL,
+      model: activeGeminiModel(),
       summary: '',
       supportedFacts: [],
       uncertainties: [],
@@ -126,7 +178,7 @@ export async function runGeminiUrlContextAnalysis(
   if (!ai) {
     return {
       status: 'unconfigured',
-      model: ACTIVE_GEMINI_MODEL,
+      model: activeGeminiModel(),
       summary: '',
       supportedFacts: [],
       uncertainties: [],
@@ -159,23 +211,25 @@ export async function runGeminiUrlContextAnalysis(
 
   try {
     // Section 21: Use URL Context ONLY (free tier eligible), never googleSearch grounding
-    const response = await ai.models.generateContent({
-      model: ACTIVE_GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        tools: [{ urlContext: {} }],
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            summary: { type: Type.STRING },
-            supportedFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
-            uncertainties: { type: Type.ARRAY, items: { type: Type.STRING } },
+    const { value: response, model: usedUrlContextModel } = await withGeminiModelFallback((model) =>
+      ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          tools: [{ urlContext: {} }],
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING },
+              supportedFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
+              uncertainties: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['summary', 'supportedFacts', 'uncertainties'],
           },
-          required: ['summary', 'supportedFacts', 'uncertainties'],
         },
-      },
-    });
+      }),
+    );
 
     const parsed = JSON.parse((response.text ?? '{}').trim()) as {
       summary?: string;
@@ -204,7 +258,7 @@ export async function runGeminiUrlContextAnalysis(
 
     const result: GeminiUrlContextResult = {
       status: 'ok',
-      model: ACTIVE_GEMINI_MODEL,
+      model: usedUrlContextModel,
       summary: parsed.summary ?? '',
       supportedFacts: Array.isArray(parsed.supportedFacts) ? parsed.supportedFacts : [],
       uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties : [],
@@ -220,7 +274,7 @@ export async function runGeminiUrlContextAnalysis(
       quotaPausedUntilMs = Date.now() + 60 * 1000;
       return {
         status: 'quota_paused',
-        model: ACTIVE_GEMINI_MODEL,
+        model: activeGeminiModel(),
         summary: '',
         supportedFacts: [],
         uncertainties: [],
@@ -231,9 +285,24 @@ export async function runGeminiUrlContextAnalysis(
       };
     }
 
+    if (isModelUnavailable(err)) {
+      return {
+        status: 'error',
+        model: activeGeminiModel(),
+        summary: '',
+        supportedFacts: [],
+        uncertainties: [],
+        retrievedUrls: [],
+        filteredOutCount,
+        checkedAt,
+        message:
+          'Modelo Gemini sobrecarregado (503 UNAVAILABLE). Tente novamente em alguns segundos ou defina outro GEMINI_MODEL no .env.',
+      };
+    }
+
     return {
       status: isAuthError(err) ? 'unconfigured' : 'error',
-      model: ACTIVE_GEMINI_MODEL,
+      model: activeGeminiModel(),
       summary: '',
       supportedFacts: [],
       uncertainties: [],
@@ -283,10 +352,17 @@ export async function generateStructuredShortScript(params: {
   }
 
   const allowedSourceIds = new Set(params.sources.map((s) => s.id));
-  const wordGuide =
+
+  // A meta editorial e o menor video que ainda monetiza: passar de 1 minuto
+  // sem esticar. A versao "monetizavel" nao e um video longo, e sim o curto com
+  // o respiro necessario para chegar aos 60-75s.
+  const MIN_WORDS = params.mode === 'short' ? 90 : 150;
+  // Modelos seguem melhor "X palavras por cena" do que um total solto: o
+  // intervalo por cena garante o minuto de monetização sem texto inflado.
+  const sceneGuide =
     params.mode === 'short'
-      ? '90 a 140 palavras no total da narração (duração alvo 45–60 segundos, 5 a 7 cenas de 5–8s)'
-      : '180 a 230 palavras no total da narração (duração alvo 90–140 segundos, 8 a 11 cenas de 7–12s)';
+      ? '6 cenas, cada uma com 15 a 20 palavras de narração (total de 90 a 120 palavras, 45 a 58 segundos)'
+      : '6 cenas, cada uma com 26 a 32 palavras de narração (total de 156 a 192 palavras, 60 a 75 segundos)';
 
   const evidenceBlock = params.sources
     .map(
@@ -295,86 +371,104 @@ export async function generateStructuredShortScript(params: {
     )
     .join('\n\n');
 
-  const prompt = [
-    `Redija um roteiro jornalístico em português do Brasil para YouTube Shorts (9:16) do canal "Canal Dark".`,
-    `Editoria: ${params.editorial}. Assunto base: "${params.title}".`,
-    `Extensão obrigatória: ${wordGuide}.`,
-    ``,
-    `Regras editoriais obrigatórias:`,
-    `1. Utilize EXCLUSIVAMENTE fatos presentes nas fontes numeradas abaixo. Nunca invente números, datas, citações ou causas.`,
-    `2. Cada cena deve listar em sourceIds apenas os IDs exatos das fontes que sustentam as afirmações daquela cena.`,
-    `3. Apresente o fato principal logo no gancho inicial e explique por que importa, sem sensacionalismo nem suspense enganoso.`,
-    `4. Se houver apenas uma fonte ou pontos em aberto, registre claramente em uncertaintyNote e na narração.`,
-    `5. Forneça termos de busca visual em português (visualQueryPt) e inglês (visualQueryEn) para acervos gratuitos (Wikimedia Commons / Internet Archive).`,
-    ``,
-    params.geminiContextSummary ? `Síntese URL Context: ${params.geminiContextSummary}\n` : '',
-    `=== DOSSIÊ DE FONTES PERMITIDAS ===`,
-    evidenceBlock,
-  ].join('\n');
+  const buildPrompt = (correction?: string): string =>
+    [
+      `Redija um roteiro jornalístico em português do Brasil para YouTube Shorts (9:16) do canal "Canal Dark".`,
+      `Editoria: ${params.editorial}. Assunto base: "${params.title}".`,
+      `EXTENSÃO OBRIGATÓRIA: ${sceneGuide}. Narração com menos de ${MIN_WORDS} palavras é inválida.`,
+      ``,
+      `Regras editoriais obrigatórias:`,
+      `1. Utilize EXCLUSIVAMENTE fatos presentes nas fontes numeradas abaixo. Nunca invente números, datas, citações ou causas.`,
+      `2. Cada cena deve listar em sourceIds apenas os IDs exatos das fontes que sustentam as afirmações daquela cena.`,
+      `3. Apresente o fato principal logo no gancho inicial e explique por que importa, sem sensacionalismo nem suspense enganoso.`,
+      `4. Se houver apenas uma fonte ou pontos em aberto, registre claramente em uncertaintyNote e na narração.`,
+      `5. Forneça termos de busca visual em português (visualQueryPt) e inglês (visualQueryEn) para acervos gratuitos (Wikimedia Commons / Internet Archive).`,
+      ``,
+      correction ? `CORREÇÃO NECESSÁRIA: ${correction}\n` : '',
+      params.geminiContextSummary ? `Síntese URL Context: ${params.geminiContextSummary}\n` : '',
+      `=== DOSSIÊ DE FONTES PERMITIDAS ===`,
+      evidenceBlock,
+    ].join('\n');
 
-  try {
-    const response = await ai.models.generateContent({
-      model: ACTIVE_GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction:
-          'Você é um roteirista jornalístico rigoroso. Retorne apenas JSON compatível com o schema, em português do Brasil claro para narração falada.',
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            suggestedTitle: { type: Type.STRING },
-            hook: { type: Type.STRING },
-            uncertaintyNote: { type: Type.STRING },
-            closing: { type: Type.STRING },
-            scenes: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  durationSec: { type: Type.INTEGER },
-                  narration: { type: Type.STRING },
-                  pronunciationNotes: { type: Type.STRING },
-                  visualQueryPt: { type: Type.STRING },
-                  visualQueryEn: { type: Type.STRING },
-                  avatarMode: { type: Type.STRING },
-                  avatarExpression: { type: Type.STRING },
-                  sourceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-                },
-                required: [
-                  'durationSec',
-                  'narration',
-                  'visualQueryPt',
-                  'visualQueryEn',
-                  'avatarMode',
-                  'avatarExpression',
-                  'sourceIds',
-                ],
-              },
+  const scriptConfig = {
+    systemInstruction:
+      'Você é um roteirista jornalístico rigoroso. Retorne apenas JSON compatível com o schema, em português do Brasil claro para narração falada.',
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        suggestedTitle: { type: Type.STRING },
+        hook: { type: Type.STRING },
+        uncertaintyNote: { type: Type.STRING },
+        closing: { type: Type.STRING },
+        scenes: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              durationSec: { type: Type.INTEGER },
+              narration: { type: Type.STRING },
+              pronunciationNotes: { type: Type.STRING },
+              visualQueryPt: { type: Type.STRING },
+              visualQueryEn: { type: Type.STRING },
+              avatarMode: { type: Type.STRING },
+              avatarExpression: { type: Type.STRING },
+              sourceIds: { type: Type.ARRAY, items: { type: Type.STRING } },
             },
+            required: [
+              'durationSec',
+              'narration',
+              'visualQueryPt',
+              'visualQueryEn',
+              'avatarMode',
+              'avatarExpression',
+              'sourceIds',
+            ],
           },
-          required: ['suggestedTitle', 'hook', 'uncertaintyNote', 'closing', 'scenes'],
         },
       },
-    });
+      required: ['suggestedTitle', 'hook', 'uncertaintyNote', 'closing', 'scenes'],
+    },
+  };
 
-    const raw = JSON.parse((response.text ?? '{}').trim()) as {
-      suggestedTitle?: string;
-      hook?: string;
-      uncertaintyNote?: string;
-      closing?: string;
-      scenes?: Array<{
-        durationSec?: number;
-        narration?: string;
-        pronunciationNotes?: string;
-        visualQueryPt?: string;
-        visualQueryEn?: string;
-        avatarMode?: string;
-        avatarExpression?: string;
-        sourceIds?: string[];
-      }>;
-    };
+  interface RawScript {
+    suggestedTitle?: string;
+    hook?: string;
+    uncertaintyNote?: string;
+    closing?: string;
+    scenes?: Array<{
+      durationSec?: number;
+      narration?: string;
+      pronunciationNotes?: string;
+      visualQueryPt?: string;
+      visualQueryEn?: string;
+      avatarMode?: string;
+      avatarExpression?: string;
+      sourceIds?: string[];
+    }>;
+  }
 
+  const requestScript = async (
+    correction?: string,
+  ): Promise<{ raw: RawScript; usedModel: string }> => {
+    const { value: response, model: usedModel } = await withGeminiModelFallback((model) =>
+      ai.models.generateContent({
+        model,
+        contents: buildPrompt(correction),
+        config: scriptConfig,
+      }),
+    );
+    return { raw: JSON.parse((response.text ?? '{}').trim()) as RawScript, usedModel };
+  };
+
+  const countNarrationWords = (raw: RawScript): number =>
+    (raw.scenes ?? [])
+      .map((scene) => scene.narration ?? '')
+      .join(' ')
+      .split(/\s+/)
+      .filter(Boolean).length;
+
+  const toScript = (raw: RawScript, usedModel: string): EditableScript => {
     const nowIso = new Date().toISOString();
     const scenes = (raw.scenes ?? []).map((sc, idx) => {
       // Section 20 & 21: Filter sourceIds strictly against dossier evidence
@@ -402,26 +496,58 @@ export async function generateStructuredShortScript(params: {
       } as const;
     });
 
-    const script: EditableScript = {
+    return {
       mode: params.mode,
       suggestedTitle: (raw.suggestedTitle ?? params.title).trim(),
       hook: (raw.hook ?? '').trim(),
       uncertaintyNote: (raw.uncertaintyNote ?? '').trim(),
       closing: (raw.closing ?? '').trim(),
       scenes: scenes.map((s) => ({ ...s })),
-      modelUsed: ACTIVE_GEMINI_MODEL,
+      modelUsed: usedModel,
       generatedAt: nowIso,
       lastEditedAt: nowIso,
       promptNoticeAccepted: true,
     };
+  };
 
-    return { status: 'ok', script };
+  try {
+    let { raw, usedModel } = await requestScript();
+    let words = countNarrationWords(raw);
+
+    // O modelo leve às vezes entrega menos do que o pedido. Uma única correção
+    // (nunca um laço) costuma resolver — e é o que garante o minuto mínimo.
+    if (words < MIN_WORDS) {
+      try {
+        const retry = await requestScript(
+          `A versão anterior tinha ${words} palavras no total. Reescreva com ${sceneGuide}. ` +
+            'Mantenha somente fatos das fontes, sem repetir frases nem inventar dados.',
+        );
+        const retryWords = countNarrationWords(retry.raw);
+        if (retryWords > words) {
+          raw = retry.raw;
+          usedModel = retry.usedModel;
+          words = retryWords;
+        }
+      } catch {
+        // Se a correção falhar, entregamos a primeira versão: o QC sinaliza a duração.
+      }
+    }
+
+    return { status: 'ok', script: toScript(raw, usedModel) };
   } catch (err) {
     if (isQuotaOrRateError(err)) {
       quotaPausedUntilMs = Date.now() + 60 * 1000;
       return {
         status: 'quota_paused',
         message: 'Limite gratuito do Gemini atingido (429). Aguarde 60 segundos antes de tentar novamente.',
+      };
+    }
+
+    if (isModelUnavailable(err)) {
+      return {
+        status: 'error',
+        message:
+          'Modelo Gemini sobrecarregado (503 UNAVAILABLE) mesmo depois do fallback. Tente novamente em alguns segundos ou ajuste GEMINI_MODEL no .env.',
       };
     }
 
@@ -434,4 +560,244 @@ export async function generateStructuredShortScript(params: {
           : 'Erro ao gerar roteiro via Gemini.',
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Metadados de publicacao (titulo, gancho para descricao, tags)
+// ---------------------------------------------------------------------------
+
+export interface PublishMetadataSuggestion {
+  title: string;
+  titleAlternatives: string[];
+  descriptionIntro: string;
+  tags: string[];
+}
+
+/**
+ * Pede ao Gemini um titulo mais honesto, 3 alternativas, uma abertura de
+ * descricao e tags. Retorna null quando nao ha chave, cota pausada ou falha —
+ * nesse caso o chamador usa a base deterministica.
+ */
+export async function suggestPublishMetadataWithGemini(params: {
+  headline: string;
+  editorial: string;
+  hook: string;
+  narrationSample: string;
+  sources: string[];
+}): Promise<PublishMetadataSuggestion | null> {
+  if (quotaPausedUntilMs > Date.now()) return null;
+
+  const ai = getGeminiClient();
+  if (!ai) return null;
+
+  const prompt = [
+    'Prepare os metadados de publicacao de um YouTube Short jornalistico em portugues do Brasil.',
+    `Editoria: ${params.editorial}.`,
+    `Titulo do roteiro: "${params.headline}".`,
+    params.hook ? `Gancho ja escrito: "${params.hook}".` : '',
+    params.narrationSample ? `Trecho da narracao: "${params.narrationSample}".` : '',
+    params.sources.length ? `Fontes: ${params.sources.join(' | ')}.` : '',
+    '',
+    'Regras:',
+    '- title: no maximo 90 caracteres, com o fato principal; sem CAIXA ALTA inteira, sem emoji, sem "clique aqui".',
+    '- titleAlternatives: 3 variacoes igualmente honestas, cada uma com no maximo 90 caracteres.',
+    '- descriptionIntro: 2 frases (maximo 280 caracteres) resumindo o que o video mostra, sem repetir o titulo ao pe da letra.',
+    '- tags: de 10 a 15 termos curtos (ate 30 caracteres cada), sem "#", misturando tema, pessoas citadas e editoria.',
+    '- Nao invente fatos, numeros ou nomes que nao estejam no material recebido.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  try {
+    const { value: response } = await withGeminiModelFallback((model) =>
+      ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'Voce escreve metadados de YouTube para um canal jornalistico. Sem clickbait enganoso: o titulo precisa ser sustentado pelo video.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              titleAlternatives: { type: Type.ARRAY, items: { type: Type.STRING } },
+              descriptionIntro: { type: Type.STRING },
+              tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['title', 'titleAlternatives', 'descriptionIntro', 'tags'],
+          },
+        },
+      }),
+    );
+
+    const raw = JSON.parse((response.text ?? '{}').trim()) as {
+      title?: string;
+      titleAlternatives?: unknown[];
+      descriptionIntro?: string;
+      tags?: unknown[];
+    };
+
+    return {
+      title: String(raw.title ?? '').trim(),
+      titleAlternatives: Array.isArray(raw.titleAlternatives)
+        ? raw.titleAlternatives.map((value) => String(value)).filter(Boolean)
+        : [],
+      descriptionIntro: String(raw.descriptionIntro ?? '').trim(),
+      tags: Array.isArray(raw.tags) ? raw.tags.map((value) => String(value)).filter(Boolean) : [],
+    };
+  } catch (err) {
+    if (isQuotaOrRateError(err)) quotaPausedUntilMs = Date.now() + 60_000;
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gemini TTS — narracao neural usando a cota gratuita da mesma chave
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
+/** Modelos tentados se o principal sumir/estiver sobrecarregado. */
+const TTS_FALLBACK_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.1-flash-tts-preview'];
+
+/** Pausa propria do TTS: 429 aqui nao deve bloquear a geracao de roteiro. */
+let ttsPausedUntilMs = 0;
+
+export function activeTtsModel(): string {
+  return (process.env['GEMINI_TTS_MODEL'] ?? '').trim() || DEFAULT_TTS_MODEL;
+}
+
+export function geminiTtsStatus(): {
+  configured: boolean;
+  model: string;
+  paused: boolean;
+  pausedUntil?: string;
+} {
+  const paused = ttsPausedUntilMs > Date.now();
+  return {
+    configured: Boolean(process.env['GEMINI_API_KEY']?.trim()),
+    model: activeTtsModel(),
+    paused,
+    pausedUntil: paused ? new Date(ttsPausedUntilMs).toISOString() : undefined,
+  };
+}
+
+export type NarrationStyle = 'ancora' | 'explicativo' | 'urgente' | 'leve' | 'neutro';
+
+/**
+ * Instrucoes em ingles funcionam melhor no TTS do Gemini, independente do
+ * idioma do texto. Se a instrucao comecar a ser lida em voz alta, desligue com
+ * TTS_STYLE_INSTRUCTIONS=0 no .env.
+ */
+const STYLE_INSTRUCTIONS: Record<NarrationStyle, string> = {
+  ancora:
+    'Read as a Brazilian television news anchor: calm, authoritative, measured pace, clear articulation.',
+  explicativo:
+    'Read as an explanatory narrator: warm, didactic, slightly slower, as if teaching a viewer.',
+  urgente:
+    'Read as an urgent breaking-news bulletin: energetic, serious, slightly faster.',
+  leve: 'Read in a light, conversational tone: friendly, relaxed, natural.',
+  neutro: '',
+};
+
+export function narrationStyleInstruction(style?: string): string {
+  if (process.env['TTS_STYLE_INSTRUCTIONS'] === '0') return '';
+  const key = (style ?? 'neutro').toLowerCase() as NarrationStyle;
+  return STYLE_INSTRUCTIONS[key] ?? '';
+}
+
+export interface GeminiSpeechResult {
+  pcm: Buffer;
+  sampleRate: number;
+  model: string;
+  voice: string;
+  mimeType: string;
+}
+
+/**
+ * Sintetiza fala em pt-BR e devolve PCM 16-bit mono (a taxa vem do mimeType,
+ * normalmente 24 kHz). O chamador grava WAV e reamostra para 16 kHz.
+ */
+export async function synthesizeSpeechWithGemini(params: {
+  text: string;
+  voice?: string;
+  style?: string;
+  model?: string;
+  timeoutMs?: number;
+}): Promise<GeminiSpeechResult> {
+  const text = (params.text ?? '').trim();
+  if (text.length < 2) throw new Error('Texto vazio para o Gemini TTS.');
+
+  if (ttsPausedUntilMs > Date.now()) {
+    throw new Error(
+      'Gemini TTS pausado por cota (429). O restante do vídeo cai na voz reserva do Edge.',
+    );
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) throw new Error('GEMINI_API_KEY ausente: Gemini TTS indisponível.');
+
+  const voice = (params.voice ?? process.env['GEMINI_TTS_VOICE'] ?? 'Kore').trim() || 'Kore';
+  const instruction = narrationStyleInstruction(params.style);
+  const contents = instruction ? `${instruction}\n\n${text}` : text;
+  const timeoutMs = Math.max(10_000, params.timeoutMs ?? 120_000);
+
+  const primary = params.model?.trim() || activeTtsModel();
+  const chain = [primary, ...TTS_FALLBACK_MODELS.filter((model) => model !== primary)];
+  let lastError: unknown = null;
+
+  for (const model of chain) {
+    try {
+      const request = ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+            languageCode: process.env['GEMINI_TTS_LANGUAGE'] ?? 'pt-BR',
+          },
+        },
+      });
+
+      const timeout = new Promise<never>((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`Gemini TTS não respondeu em ${Math.round(timeoutMs / 1000)}s.`)),
+          timeoutMs,
+        );
+        request.finally(() => clearTimeout(timer)).catch(() => undefined);
+      });
+
+      const response = await Promise.race([request, timeout]);
+      const parts = response.candidates?.[0]?.content?.parts ?? [];
+      const audioPart = parts.find((part) => part.inlineData?.data);
+      const base64 = audioPart?.inlineData?.data;
+
+      if (!base64) {
+        throw new Error('Gemini TTS respondeu sem áudio (verifique o modelo escolhido).');
+      }
+
+      const mimeType = audioPart?.inlineData?.mimeType ?? 'audio/L16;codec=pcm;rate=24000';
+      const rateMatch = /rate=(\d+)/.exec(mimeType);
+      const sampleRate = rateMatch ? Number(rateMatch[1]) : 24_000;
+
+      return { pcm: Buffer.from(base64, 'base64'), sampleRate, model, voice, mimeType };
+    } catch (err) {
+      lastError = err;
+
+      if (isQuotaOrRateError(err)) {
+        ttsPausedUntilMs = Date.now() + 60_000;
+        throw new Error('Limite do Gemini TTS atingido (429). Aguardando ou usando a voz reserva.');
+      }
+
+      // Modelo ausente/sobrecarregado: tenta o proximo da cadeia.
+      if (isModelUnavailable(err) || /404|not found/i.test(err instanceof Error ? err.message : '')) {
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Falha ao sintetizar com Gemini TTS.');
 }

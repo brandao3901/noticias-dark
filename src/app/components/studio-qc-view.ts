@@ -3,12 +3,16 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { SpeechPreview } from '../services/speech-preview';
+import { RenderQueue } from '../services/render-queue';
+import type { RenderJobResultView } from '../services/render-queue';
 import { StudioStore, getSceneMediaList, splitTextIntoSubtitleCues } from '../services/studio-store';
 import { PresenterAvatar } from './presenter-avatar';
+import { PublishPanel } from './publish-panel';
+import { NarrationVoicePicker } from './narration-voice-picker';
 
 @Component({
   selector: 'app-studio-qc-view',
-  imports: [ReactiveFormsModule, MatIconModule, DatePipe, PresenterAvatar],
+  imports: [ReactiveFormsModule, MatIconModule, DatePipe, PresenterAvatar, PublishPanel, NarrationVoicePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.activePauta(); as pauta) {
@@ -61,12 +65,12 @@ import { PresenterAvatar } from './presenter-avatar';
 
               <!-- Faixa discreta de identificação do canal -->
               <div class="pointer-events-none absolute top-3 left-3 right-3 z-10 flex items-center justify-between text-[10px] font-mono-tabular text-slate-200/90">
-                <span class="font-semibold tracking-wider">CANAL DARK</span>
+                <span class="font-semibold tracking-wider">{{ channelLabel() }}</span>
                 <span>{{ pauta.editorial }}</span>
               </div>
 
               <!-- Avatar apresentador (Full ou PiP sem cobrir legenda) -->
-              @if (scene.avatarMode === 'full') {
+              @if (effectiveAvatarMode() === 'full') {
                 <div class="pointer-events-none absolute inset-x-0 top-10 bottom-20 z-10 flex items-end justify-center">
                   <app-presenter-avatar
                     mode="full"
@@ -75,7 +79,7 @@ import { PresenterAvatar } from './presenter-avatar';
                     [expression]="scene.avatarExpression"
                   />
                 </div>
-              } @else if (scene.avatarMode === 'pip') {
+              } @else if (effectiveAvatarMode() === 'pip') {
                 <div class="pointer-events-none absolute top-11 right-3 z-10">
                   <app-presenter-avatar
                     mode="pip"
@@ -375,6 +379,11 @@ import { PresenterAvatar } from './presenter-avatar';
                 </p>
               </div>
             }
+
+            <!-- Publicação: conexão da conta, metadados, envio e desempenho.
+                 A conexão é da conta, então aparece em qualquer estágio; só o
+                 ato de publicar exige pauta aprovada. -->
+            <app-publish-panel />
           </section>
 
           <!-- Pacote de Exportação (MP4, SRT, VTT, Manifesto JSON e Comando FFmpeg 1080x1920) -->
@@ -386,15 +395,92 @@ import { PresenterAvatar } from './presenter-avatar';
               </p>
             </div>
 
+            <!-- O que entra no arquivo final -->
+            <div class="flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-lg border border-white/10 bg-[#0a0d12] px-3.5 py-3">
+              <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  [checked]="autoNarration()"
+                  (change)="toggleAutoNarration()"
+                  class="h-3.5 w-3.5 accent-[#e59a38]"
+                />
+                <span class="font-medium">Narração pt-BR neural</span>
+              </label>
+
+              @if (autoNarration()) {
+                <app-narration-voice-picker />
+              }
+
+              <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  [checked]="avatarInVideo()"
+                  (change)="toggleAvatarInVideo()"
+                  class="h-3.5 w-3.5 accent-[#e59a38]"
+                />
+                <span class="font-medium">Avatar no vídeo</span>
+              </label>
+
+              <span class="text-[11px] text-slate-500">
+                @if (autoNarration()) {
+                  a voz é gerada no servidor e o avatar sincroniza a boca com ela
+                } @else {
+                  sem narração nova: usa o áudio importado do Clipchamp, se houver
+                }
+              </span>
+            </div>
+
+            <!-- Fila de render: o trabalho roda no servidor e o progresso vem por SSE -->
+            @if (queue.activeJob(); as job) {
+              <div class="rounded-lg border border-[#e59a38]/35 bg-[#e59a38]/[0.06] p-3.5 space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span class="font-medium text-slate-100">
+                    {{ job.mode === 'preview' ? 'Prévia' : 'Pacote final' }} · {{ job.stage }}
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono-tabular text-slate-300">{{ job.pct }}%</span>
+                    <button
+                      type="button"
+                      (click)="cancelRender()"
+                      class="rounded border border-white/15 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-white/10"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+                <div class="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    class="h-full rounded-full bg-[#e59a38] transition-all duration-300"
+                    [style.width.%]="job.pct"
+                  ></div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                  <span>{{ job.message }}</span>
+                  <span class="font-mono-tabular">
+                    {{ queue.activeCount() }} na fila · {{ job.label }}
+                  </span>
+                </div>
+              </div>
+            }
+
             <div class="flex flex-wrap gap-2.5">
               <button
                 type="button"
-                (click)="renderAndDownloadMp4()"
+                (click)="renderAndDownloadMp4('final')"
                 [disabled]="renderingMp4() || !pauta.script?.scenes?.length"
                 class="inline-flex items-center gap-1.5 rounded-lg bg-[#e59a38] px-3.5 py-2 text-xs font-semibold text-[#0a0d12] hover:bg-[#f0aa4b] disabled:opacity-45 whitespace-nowrap"
               >
                 <mat-icon class="text-[16px]">movie</mat-icon>
-                <span>{{ renderingMp4() ? 'Renderizando MP4...' : 'Baixar vídeo 9:16 (.MP4)' }}</span>
+                <span>{{ renderingMp4() ? 'Renderizando MP4...' : 'Gerar pacote final (.MP4)' }}</span>
+              </button>
+              <button
+                type="button"
+                (click)="renderAndDownloadMp4('preview')"
+                [disabled]="renderingMp4() || !pauta.script?.scenes?.length"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-xs font-medium text-slate-200 hover:bg-white/10 disabled:opacity-40 whitespace-nowrap"
+              >
+                <mat-icon class="text-[16px]">visibility</mat-icon>
+                <span>Renderizar prévia</span>
               </button>
               <button
                 type="button"
@@ -434,6 +520,81 @@ import { PresenterAvatar } from './presenter-avatar';
             @if (renderMp4Error()) {
               <p class="text-xs text-red-300">{{ renderMp4Error() }}</p>
             }
+            @if (gateMessage(); as gate) {
+              <div class="rounded-lg border border-amber-500/35 bg-amber-950/25 px-3.5 py-2.5 text-xs text-amber-200">
+                {{ gate }}
+              </div>
+            }
+
+            @if (pauta.render || lastRenderInfo(); as info) {
+              <div class="rounded-lg border border-white/10 bg-[#0a0d12] p-3.5">
+                <div class="flex flex-wrap items-start gap-3">
+                  @if (pauta.render?.thumbnailUrl || info?.thumbnailUrl) {
+                    <img
+                      [src]="pauta.render?.thumbnailUrl || info?.thumbnailUrl"
+                      alt="Capa do vídeo renderizado"
+                      class="h-24 w-[54px] rounded border border-white/10 object-cover"
+                    />
+                  }
+                  <div class="min-w-0 flex-1">
+                    <div class="text-xs font-semibold text-slate-100">
+                      Pacote arquivado
+                      @if ((pauta.render?.mode || info?.mode) === 'preview') {
+                        <span class="ml-1 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-200">
+                          prévia
+                        </span>
+                      }
+                    </div>
+                    <div class="mt-0.5 text-[11px] text-slate-400 font-mono-tabular">
+                      {{ pauta.render?.seconds ?? info?.seconds }}s
+                      @if ((pauta.render?.mode || info?.mode) === 'final') {
+                        <span> · liberado para publicação</span>
+                      }
+                      @if ((pauta.render?.seconds ?? info?.seconds ?? 0) < 60) {
+                        <span class="text-amber-300"> · abaixo de 1 minuto</span>
+                      }
+                    </div>
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                      <a
+                        [href]="pauta.render?.videoUrl || info?.videoUrl"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="inline-flex items-center gap-1 rounded-md border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-white/5"
+                      >
+                        <mat-icon class="text-[14px]">play_circle</mat-icon>
+                        <span>Abrir vídeo</span>
+                      </a>
+                      <button
+                        type="button"
+                        (click)="downloadRenderedVideo()"
+                        class="inline-flex items-center gap-1 rounded-md border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-white/5"
+                      >
+                        <mat-icon class="text-[14px]">download</mat-icon>
+                        <span>Baixar .MP4</span>
+                      </button>
+                      <a
+                        [href]="'/api/projects/' + pauta.id + '/file/manifesto-direitos.json'"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="inline-flex items-center gap-1 rounded-md border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-white/5"
+                      >
+                        <mat-icon class="text-[14px]">description</mat-icon>
+                        <span>Manifesto</span>
+                      </a>
+                      <a
+                        [href]="'/api/projects/' + pauta.id + '/file/legendas.srt'"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="inline-flex items-center gap-1 rounded-md border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-white/5"
+                      >
+                        <mat-icon class="text-[14px]">subtitles</mat-icon>
+                        <span>.SRT</span>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            }
 
             <div class="rounded-lg border border-white/10 bg-[#0a0d12] p-3.5">
               <div class="flex items-center justify-between gap-2 mb-2">
@@ -464,10 +625,43 @@ export class StudioQcView {
 
   readonly approvalNoteControl = new FormControl('', { nonNullable: true });
   readonly copiedFfmpeg = signal(false);
-  readonly renderingMp4 = signal(false);
+  readonly queue = inject(RenderQueue);
   readonly renderMp4Error = signal<string | null>(null);
+  readonly gateMessage = signal<string | null>(null);
+  readonly lastRenderInfo = signal<{
+    seconds: number;
+    rate: number;
+    videoUrl: string;
+    thumbnailUrl: string | null;
+    mode: 'final' | 'preview';
+    files: string[];
+  } | null>(null);
+  private handledJobId: string | null = null;
+
+  /** Há render desta pauta na fila ou rodando? */
+  readonly renderingMp4 = computed(() => {
+    const job = this.queue.activeJob();
+    return Boolean(job && job.pautaId === this.store.activePauta()?.id);
+  });
   readonly mediaSlotIndex = signal(0);
   readonly subtitleCueIndex = signal(0);
+
+  /** Narracao neural gerada no servidor (substitui a voz do navegador no MP4). */
+  /** Mesma tarja que o render grava no vídeo (vem do servidor). */
+  readonly channelLabel = computed(
+    () => this.store.configStatus()?.channelLabel || 'NOTÍCIAS NA BRASA · APRESENTADOR VIRTUAL',
+  );
+
+  readonly autoNarration = signal(true);
+  readonly avatarInVideo = signal(true);
+
+  toggleAutoNarration(): void {
+    this.autoNarration.update((value) => !value);
+  }
+
+  toggleAvatarInVideo(): void {
+    this.avatarInVideo.update((value) => !value);
+  }
 
   readonly activeScene = computed(() => {
     const scenes = this.store.activePauta()?.script?.scenes ?? [];
@@ -476,6 +670,23 @@ export class StudioQcView {
   });
 
   readonly activeSceneAssets = computed(() => getSceneMediaList(this.activeScene()));
+
+  /**
+   * Mesma regra do render: a foto do fato manda. Sem imagem, apresentador em
+   * tela cheia; com imagem, ele sai de cena (só volta no fechamento, em PiP).
+   */
+  readonly effectiveAvatarMode = computed<'full' | 'pip' | 'hidden'>(() => {
+    const scenes = this.store.activePauta()?.script?.scenes ?? [];
+    const scene = this.activeScene();
+    if (!scene) return 'hidden';
+    if (scene.avatarMode === 'hidden') return 'hidden';
+
+    const hasVisual = this.activeSceneAssets().length > 0;
+    if (!hasVisual) return 'full';
+
+    const isLast = scenes[scenes.length - 1]?.id === scene.id;
+    return isLast ? 'pip' : 'hidden';
+  });
 
   readonly sceneSubtitleCues = computed(() => {
     const text = this.activeScene()?.narration ?? '';
@@ -571,6 +782,47 @@ export class StudioQcView {
       this.mediaSlotIndex.set(0);
       this.subtitleCueIndex.set(0);
     });
+
+    // Reage ao fim do job da fila: grava o pacote na pauta e mostra o resultado.
+    effect(() => {
+      const pauta = this.store.activePauta();
+      if (!pauta) return;
+
+      for (const job of this.queue.jobs()) {
+        if (job.pautaId !== pauta.id || job.id === this.handledJobId) continue;
+        // Publicação é tratada no próprio painel de publicação.
+        if (job.kind !== 'render') continue;
+
+        if (job.status === 'done' && job.result) {
+          const result = job.result as RenderJobResultView;
+          this.handledJobId = job.id;
+          this.store.markRendered(pauta.id, {
+            seconds: result.seconds,
+            videoUrl: result.videoUrl,
+            thumbnailUrl: result.thumbnailUrl,
+            mode: result.mode,
+          });
+          this.lastRenderInfo.set({
+            seconds: result.seconds,
+            rate: result.narrationRate,
+            videoUrl: result.videoUrl,
+            thumbnailUrl: result.thumbnailUrl,
+            mode: result.mode,
+            files: result.files,
+          });
+        } else if (job.status === 'failed') {
+          this.handledJobId = job.id;
+          this.renderMp4Error.set(job.error ?? 'O render falhou na fila.');
+        } else if (job.status === 'cancelled') {
+          this.handledJobId = job.id;
+        }
+      }
+    });
+  }
+
+  cancelRender(): void {
+    const job = this.queue.activeJob();
+    if (job) void this.queue.cancel(job.id);
   }
 
   selectPreviewScene(idx: number): void {
@@ -628,21 +880,35 @@ export class StudioQcView {
     this.triggerDownload(`roteiro-descricao_${pauta.id}.txt`, txt, 'text/plain;charset=utf-8');
   }
 
-  async renderAndDownloadMp4(): Promise<void> {
+  async renderAndDownloadMp4(mode: 'final' | 'preview' = 'final'): Promise<void> {
     const pauta = this.store.activePauta();
     if (!pauta?.script?.scenes?.length) return;
 
-    this.renderingMp4.set(true);
     this.renderMp4Error.set(null);
+    this.gateMessage.set(null);
 
     try {
       const srtContent = this.store.buildSubtitles(pauta, 'srt');
       const audioBase64 =
         pauta.narration.mode === 'clipchamp' ? await this.speech.getImportedAudioBase64() : undefined;
 
+      // O servidor decide o gate (aprovação + QC) lendo o disco: a pauta precisa
+      // estar salva antes de pedir o pacote final.
+      const saved = await this.store.flushProject(pauta.id);
+      if (!saved) {
+        throw new Error(
+          'Não foi possível salvar a pauta no disco antes do render. Verifique se o servidor está no ar.',
+        );
+      }
+
       const payload = {
+        pautaId: pauta.id,
+        mode,
         scenes: pauta.script.scenes.map((sc) => ({
           durationSec: sc.durationSec,
+          narration: sc.narration,
+          avatarMode: this.avatarInVideo() ? sc.avatarMode : 'hidden',
+          avatarExpression: sc.avatarExpression,
           mediaItems: getSceneMediaList(sc).map((m) => ({
             kind: m.kind,
             mediaUrl: m.mediaUrl,
@@ -651,27 +917,46 @@ export class StudioQcView {
         })),
         srtContent,
         audioBase64,
+        narration: {
+          enabled: !audioBase64 && this.autoNarration(),
+          engine: pauta.narration.engine,
+          voice: pauta.narration.voiceName || undefined,
+          style: pauta.narration.style,
+          rate: pauta.narration.rate,
+          // Piso de monetização: a voz desacelera (Edge) ou o tempo é
+          // distribuído (Gemini) para passar de 1 minuto.
+          minSeconds: pauta.script?.mode === 'expanded' ? 62 : 0,
+          fallbackToEdge: true,
+        },
+        artifacts: {
+          manifestJson: this.store.buildRightsManifest(pauta),
+          scriptText: this.store.buildScriptAndDescriptionText(pauta),
+          qcReport: pauta.qc ?? null,
+        },
       };
 
-      const res = await fetch('/api/export/render-mp4', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const errData = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(errData?.error ?? `Falha HTTP ${res.status} ao renderizar o vídeo MP4.`);
-      }
-
-      const blob = await res.blob();
-      this.triggerBlobDownload(`short_${pauta.id}.mp4`, blob);
+      await this.queue.enqueue(payload);
     } catch (err) {
-      this.renderMp4Error.set(
-        err instanceof Error ? err.message : 'Erro inesperado ao gerar vídeo MP4.',
-      );
-    } finally {
-      this.renderingMp4.set(false);
+      const message = err instanceof Error ? err.message : 'Erro inesperado ao enfileirar o render.';
+      if (/aprovação|bloqueantes|salva no disco/i.test(message)) {
+        this.gateMessage.set(message);
+      } else {
+        this.renderMp4Error.set(message);
+      }
+    }
+  }
+
+  /** Baixa o pacote já arquivado no servidor (não re-renderiza). */
+  async downloadRenderedVideo(): Promise<void> {
+    const pauta = this.store.activePauta();
+    const videoUrl = pauta?.render?.videoUrl;
+    if (!videoUrl) return;
+    try {
+      const res = await fetch(videoUrl);
+      if (!res.ok) throw new Error(`Falha ao buscar o vídeo (HTTP ${res.status}).`);
+      this.triggerBlobDownload(`short_${pauta.id}.mp4`, await res.blob());
+    } catch (err) {
+      this.renderMp4Error.set(err instanceof Error ? err.message : 'Erro ao baixar o vídeo.');
     }
   }
 

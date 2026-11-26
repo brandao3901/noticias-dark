@@ -1,5 +1,6 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { HTML_HEADERS } from './http';
 
 const BLOCKED_X_HOSTS = new Set([
   'x.com',
@@ -191,9 +192,8 @@ export async function safeFetchWithRedirectGuard(
         redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
         headers: {
-          'User-Agent': 'CanalDarkEditorial/0.1 (+https://canaldark.local)',
-          Accept: options.accept ?? 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.7',
+          ...HTML_HEADERS,
+          Accept: options.accept ?? HTML_HEADERS['Accept'],
         },
       });
     } catch (err) {

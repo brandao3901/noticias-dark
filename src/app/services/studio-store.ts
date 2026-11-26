@@ -17,6 +17,7 @@ import type {
   PipelineStage,
   ProviderConfigStatus,
   QcCheckItem,
+  YoutubePublishState,
   QcReport,
   ScriptScene,
   ScriptVersionMode,
@@ -177,6 +178,28 @@ const QUICK_ACRONYM_EXPANSIONS: Record<string, string> = {
   PIX: 'Pix Banco Central',
 };
 
+/** Verbos que abrem manchete e nao sao nome de ninguem ("Morre Andy Taylor"). */
+const HEADLINE_VERBS = new Set([
+  'morre', 'morreu', 'diz', 'afirma', 'revela', 'revelou', 'confessa', 'confessou',
+  'anuncia', 'anunciou', 'nega', 'negou', 'processa', 'detona', 'detonou', 'critica',
+  'criticou', 'rebate', 'rebateu', 'responde', 'respondeu', 'assume', 'assumiu',
+  'desabafa', 'desabafou', 'flagra', 'flagrou', 'interna', 'internou', 'opera', 'operou',
+  'volta', 'voltou', 'deixa', 'deixou', 'ganha', 'ganhou', 'perde', 'perdeu', 'faz', 'fez',
+  'mostra', 'mostrou', 'surge', 'surgiu', 'posa', 'posou', 'aparece', 'apareceu',
+  'comemora', 'comemorou', 'chora', 'chorou', 'briga', 'brigou', 'recusa', 'recusou',
+  'confirma', 'confirmou',
+]);
+
+function stripHeadlineVerb(candidate: string): string {
+  const words = candidate.split(/\s+/);
+  if (words.length < 2) return candidate;
+  const first = words[0]
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return HEADLINE_VERBS.has(first) ? words.slice(1).join(' ') : candidate;
+}
+
 function extractOrderedNamesFromSingleText(text: string): string[] {
   if (!text || !text.trim()) return [];
   const rawHits: Array<{ pos: number; end: number; name: string; isMulti?: boolean }> = [];
@@ -207,7 +230,7 @@ function extractOrderedNamesFromSingleText(text: string): string[] {
       startPos += candidate.length - rest.length;
       candidate = rest;
     }
-    const clean = normalizeName(candidate);
+    const clean = normalizeName(stripHeadlineVerb(candidate));
     if (clean.length < 3 || QUICK_ENTITY_STOP_WORDS.has(clean.toLowerCase())) continue;
     coveredSpans.push({ start: startPos, end: endPos });
     rawHits.push({ pos: startPos, end: endPos, name: clean, isMulti: clean.includes(' ') });
@@ -320,7 +343,7 @@ export class StudioStore {
   readonly configStatus = signal<ProviderConfigStatus>({
     geminiConfigured: false,
     geminiQuotaPaused: false,
-    activeModel: 'gemini-4-hydrogen',
+    activeModel: 'gemini-3.8-flash',
   });
 
   readonly geminiDisabledByUser = signal(false);
@@ -332,6 +355,12 @@ export class StudioStore {
   readonly feedStatuses = signal<FeedSourceStatus[]>([]);
   readonly feedRespondedCount = signal(0);
   readonly feedTotalCount = signal(0);
+  readonly feedNewestAt = signal<string | null>(null);
+  /** Janela de atualidade em horas (0 = sem filtro). */
+  readonly feedMaxAgeHours = signal(72);
+  /** Só notícias com sinal viral (padrão), em vez da lista completa. */
+  readonly viralOnly = signal(true);
+  readonly viralMinScore = signal(4);
   readonly feedsLoading = signal(false);
   readonly feedsError = signal<string | null>(null);
 
@@ -376,6 +405,7 @@ export class StudioStore {
     if (this.isBrowser) {
       void this.refreshConfigStatus();
       void this.loadFeeds(false);
+      void this.syncFromServer();
     }
   }
 
@@ -404,6 +434,134 @@ export class StudioStore {
     } catch {
       // Ignore storage quota issues
     }
+    this.scheduleServerSync();
+  }
+
+  // --- Persistência no servidor (pacote por pauta, spec §4.12) --------------
+
+  private readonly syncedSnapshots = new Map<string, string>();
+  private serverSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private scheduleServerSync(): void {
+    if (!this.isBrowser) return;
+    if (this.serverSyncTimer) clearTimeout(this.serverSyncTimer);
+    this.serverSyncTimer = setTimeout(() => {
+      void this.syncPautasToServer();
+    }, 800);
+  }
+
+  /** Envia ao servidor só o que mudou desde o último envio bem-sucedido. */
+  async syncPautasToServer(): Promise<void> {
+    if (!this.isBrowser) return;
+    for (const pauta of this.pautas()) {
+      const snapshot = JSON.stringify(pauta);
+      if (this.syncedSnapshots.get(pauta.id) === snapshot) continue;
+      try {
+        await firstValueFrom(
+          this.http.put<{ ok: boolean }>(`/api/projects/${encodeURIComponent(pauta.id)}`, pauta),
+        );
+        this.syncedSnapshots.set(pauta.id, snapshot);
+      } catch {
+        // Servidor indisponível: o localStorage continua sendo o fallback.
+        return;
+      }
+    }
+  }
+
+  /** Garante que a pauta esteja no disco antes de operações que dependem dela. */
+  async flushProject(id: string): Promise<boolean> {
+    if (!this.isBrowser) return false;
+    const pauta = this.pautas().find((p) => p.id === id);
+    if (!pauta) return false;
+    try {
+      await firstValueFrom(
+        this.http.put<{ ok: boolean }>(`/api/projects/${encodeURIComponent(id)}`, pauta),
+      );
+      this.syncedSnapshots.set(id, JSON.stringify(pauta));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Recupera pautas que existem no disco e não estão neste navegador. */
+  async syncFromServer(): Promise<void> {
+    if (!this.isBrowser) return;
+    try {
+      const list = await firstValueFrom(
+        this.http.get<{ projects: Array<{ id: string; updatedAt: string }> }>('/api/projects'),
+      );
+      const local = new Map(this.pautas().map((p) => [p.id, p]));
+      const merged = [...this.pautas()];
+      let changed = false;
+
+      for (const item of list.projects ?? []) {
+        const localPauta = local.get(item.id);
+        if (localPauta && new Date(localPauta.updatedAt).getTime() >= new Date(item.updatedAt).getTime()) {
+          continue;
+        }
+        try {
+          const remote = await firstValueFrom(
+            this.http.get<PautaRecord>(`/api/projects/${encodeURIComponent(item.id)}`),
+          );
+          const index = merged.findIndex((p) => p.id === item.id);
+          if (index >= 0) merged[index] = remote;
+          else merged.push(remote);
+          changed = true;
+        } catch {
+          // Projeto ilegível no disco: ignorado sem derrubar a lista.
+        }
+      }
+
+      if (changed) {
+        this.pautas.set(merged.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()));
+        if (!this.activePautaId() && merged.length > 0) this.activePautaId.set(merged[0].id);
+        this.persist();
+      }
+    } catch {
+      // Sem servidor (build estático, por exemplo): segue só com o localStorage.
+    }
+  }
+
+  /** Marca a pauta como publicada e guarda o vídeo do YouTube. */
+  markPublished(id: string, info: YoutubePublishState | null): void {
+    const nowIso = new Date().toISOString();
+    this.pautas.update((list) =>
+      list.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              stage: info ? 'PUBLISHED' : p.stage,
+              updatedAt: nowIso,
+              youtube: info ?? p.youtube,
+            }
+          : p,
+      ),
+    );
+    this.recomputeQc(id);
+    this.persist();
+  }
+
+  /** Marca a pauta como renderizada e guarda os dados do pacote arquivado. */
+  markRendered(
+    id: string,
+    info: { seconds: number; videoUrl: string; thumbnailUrl?: string | null; mode: 'final' | 'preview' },
+  ): void {
+    const nowIso = new Date().toISOString();
+    this.pautas.update((list) =>
+      list.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              stage: 'RENDERED',
+              updatedAt: nowIso,
+              render: { ...info, renderedAt: nowIso },
+            }
+          : p,
+      ),
+    );
+    this.recomputeQc(id);
+    this.persist();
   }
 
   clearFeedback(): void {
@@ -425,6 +583,17 @@ export class StudioStore {
     this.geminiDisabledByUser.update((v) => !v);
   }
 
+  setFeedMaxAge(hours: number): void {
+    this.feedMaxAgeHours.set(hours);
+    void this.loadFeeds(false);
+  }
+
+  setViralOnly(value: boolean): void {
+    if (this.viralOnly() === value) return;
+    this.viralOnly.set(value);
+    void this.loadFeeds(false);
+  }
+
   async loadFeeds(forceRefresh: boolean): Promise<void> {
     this.feedsLoading.set(true);
     this.feedsError.set(null);
@@ -435,12 +604,19 @@ export class StudioStore {
           statuses: FeedSourceStatus[];
           respondedCount: number;
           totalCount: number;
-        }>(`/api/discovery/rss?refresh=${forceRefresh ? '1' : '0'}`),
+          newestAt?: string;
+        }>(
+          `/api/discovery/rss?refresh=${forceRefresh ? '1' : '0'}` +
+            `&maxAge=${this.feedMaxAgeHours()}` +
+            `&viral=${this.viralOnly() ? '1' : '0'}` +
+            `&minViral=${this.viralMinScore()}`,
+        ),
       );
       this.feedItems.set(res.items ?? []);
       this.feedStatuses.set(res.statuses ?? []);
       this.feedRespondedCount.set(res.respondedCount ?? 0);
       this.feedTotalCount.set(res.totalCount ?? 0);
+      this.feedNewestAt.set(res.newestAt ?? null);
     } catch (err) {
       this.feedsError.set(
         err instanceof Error ? err.message : 'Não foi possível consultar os feeds públicos.',
@@ -563,27 +739,11 @@ export class StudioStore {
     const extraExpandedScenes: typeof DEMO_SHORT_TEXT_SCENES = [
       {
         durationSec: 16,
-        narration: 'Na versão expandida para assuntos que exigem contexto adicional, cada cena alterna apresentador e imagens contextuais licenciadas com respiro visual.',
+        narration: 'Na versão monetizável, a cena extra só existe para passar de um minuto com contexto útil, e não para esticar o vídeo.',
         visualPt: 'análise de dados jornalismo',
         visualEn: 'data journalism screen',
         avatarMode: 'pip',
         expr: 'explaining',
-      },
-      {
-        durationSec: 16,
-        narration: 'O controle de qualidade verifica duração, legendas em área segura, presença de áudio em português do Brasil e risco de reivindicação acima de sessenta segundos.',
-        visualPt: 'controle qualidade vídeo',
-        visualEn: 'studio monitor waveform',
-        avatarMode: 'pip',
-        expr: 'alert',
-      },
-      {
-        durationSec: 15,
-        narration: 'Assim, o editor humano decide aprovar ou corrigir antes da exportação do pacote final, sem qualquer publicação automática.',
-        visualPt: 'estúdio transmissão escuro',
-        visualEn: 'dark broadcast desk',
-        avatarMode: 'full',
-        expr: 'closing',
       },
     ];
     const sourceDemoScenes = isExpanded
@@ -608,8 +768,8 @@ export class StudioStore {
       id: `demo-${Date.now()}`,
       url: 'https://canaldark.local/prova-tecnica',
       title: isExpanded
-        ? 'Prova Técnica: Roteiro Expandido (90–150s)'
-        : 'Prova Técnica: Roteiro Curto (45–60s)',
+        ? 'Prova Técnica: Roteiro Monetizável (60–75s)'
+        : 'Prova Técnica: Roteiro Curto (45–58s)',
       editorial: 'Tecnologia',
       stage: 'DRAFTED',
       isSocialXUrl: false,
@@ -640,7 +800,7 @@ export class StudioStore {
       script: {
         mode,
         suggestedTitle: isExpanded
-          ? 'Validação Técnica Expandida — Canal Dark'
+          ? 'Validação Técnica Monetizável — Canal Dark'
           : 'Validação Técnica Curta — Canal Dark',
         hook: scenes[0]?.narration ?? '',
         uncertaintyNote: 'Texto fictício de validação técnica; não representa notícia apurada.',
@@ -678,7 +838,11 @@ export class StudioStore {
     if (this.activePautaId() === id) {
       this.activePautaId.set(this.pautas()[0]?.id ?? null);
     }
+    this.syncedSnapshots.delete(id);
     this.persist();
+    if (this.isBrowser) {
+      firstValueFrom(this.http.delete(`/api/projects/${encodeURIComponent(id)}`)).catch(() => undefined);
+    }
   }
 
   updatePautaTitle(id: string, title: string): void {
@@ -822,6 +986,32 @@ export class StudioStore {
       const nextStage: PipelineStage =
         sources.length > 0 && target.stage === 'DISCOVERED' ? 'SOURCED' : target.stage;
 
+      // Foto publicada pelo veículo: é a imagem real do fato. Fica registrada
+      // como ativo com crédito e link da matéria, mas com direitos reservados.
+      const articleMedia: MediaAsset[] = [];
+      if (!target.isSocialXUrl && extracted.imageUrl) {
+        const credit = extracted.imageCredit || extracted.domain || 'veículo';
+        articleMedia.push({
+          id: `article-${id}-1`,
+          provider: 'article',
+          kind: 'image',
+          title: extracted.imageAlt || extracted.title || 'Imagem publicada na matéria',
+          pageUrl: extracted.finalUrl || target.url,
+          mediaUrl: extracted.imageUrl,
+          thumbUrl: extracted.imageUrl,
+          description: extracted.imageAlt || extracted.description,
+          author: credit,
+          licenseName: '© veículo (uso editorial a confirmar)',
+          licenseUrl: extracted.finalUrl || target.url,
+          attributionText: `${credit} — imagem publicada na matéria`,
+          capturedAt: consultedAt,
+          isIllustrative: false,
+          width: 0,
+          height: 0,
+          orientation: 'horizontal',
+        });
+      }
+
       this.pautas.update((list) =>
         list.map((p) =>
           p.id === id
@@ -832,6 +1022,7 @@ export class StudioStore {
                 updatedAt: consultedAt,
                 dossier: {
                   primaryExtraction: extracted,
+                  articleMedia,
                   gdeltStatus: gdeltRes.status,
                   gdeltMessage: gdeltRes.message,
                   gdeltArticles: gdeltRes.articles,
@@ -1305,6 +1496,44 @@ export class StudioStore {
     this.persist();
   }
 
+  /**
+   * Refaz a mídia de TODAS as cenas de uma vez: descarta o que estava vinculado
+   * e busca de novo com os critérios atuais. Útil quando as regras de coerência
+   * mudam (ou quando a pauta foi montada com imagens erradas).
+   */
+  async refillAllScenesMedia(
+    pautaId: string,
+    options: { maxPerScene: number; kindPreference: 'both' | 'image' | 'video' },
+  ): Promise<void> {
+    const target = this.pautas().find((p) => p.id === pautaId);
+    if (!target?.script?.scenes?.length) return;
+
+    this.clearFeedback();
+    await this.autoFillMediaFromNames(pautaId, {
+      maxPerScene: options.maxPerScene,
+      kindPreference: options.kindPreference,
+      replaceExisting: true,
+    });
+
+    const updated = this.pautas().find((p) => p.id === pautaId);
+    const total = (updated?.script?.scenes ?? []).reduce(
+      (acc, scene) => acc + getSceneMediaList(scene).length,
+      0,
+    );
+    const empty = (updated?.script?.scenes ?? []).filter(
+      (scene) => getSceneMediaList(scene).length === 0,
+    ).length;
+
+    this.actionFeedback.set({
+      type: empty > 0 ? 'warn' : 'info',
+      text:
+        `Mídia refeita: ${total} ativo(s) em ${updated?.script?.scenes?.length ?? 0} cena(s)` +
+        (empty > 0
+          ? `. ${empty} cena(s) ficaram sem imagem coerente e usam o cenário do estúdio.`
+          : '.'),
+    });
+  }
+
   async autoFillMediaFromNames(
     pautaId: string,
     options: {
@@ -1340,6 +1569,8 @@ export class StudioStore {
           editorial: target.editorial,
           kindPreference: options.kindPreference,
           maxPerScene: options.maxPerScene,
+          // A foto da matéria tem prioridade sobre qualquer acervo.
+          articleAssets: target.dossier.articleMedia ?? [],
           scenes: targetScenes.map((s) => ({
             id: s.id,
             narration: s.narration,
@@ -1553,6 +1784,20 @@ export class StudioStore {
       }
     }
 
+    // 3b. Foto publicada pelo veículo: é a imagem real do fato, mas os direitos
+    // ficam com quem publicou. O crédito está no manifesto; a decisão é humana.
+    const articleAssets = scenes
+      .flatMap((scene) => getSceneMediaList(scene))
+      .filter((asset) => asset.provider === 'article');
+    if (articleAssets.length > 0) {
+      items.push({
+        id: 'qc-article-media',
+        label: 'Foto da matéria (direito do veículo)',
+        severity: 'warning',
+        detail: `${articleAssets.length} cena(s) usam imagem publicada pelo veículo. Crédito e link da matéria estão no manifesto, mas o direito de uso é do veículo: confirme antes de publicar.`,
+      });
+    }
+
     // 4. Narração pt-BR
     items.push({
       id: 'qc-voice',
@@ -1561,24 +1806,37 @@ export class StudioStore {
       detail: pauta.narration.audioReady
         ? pauta.narration.mode === 'clipchamp'
           ? `Áudio Clipchamp importado (${pauta.narration.audioFileName ?? 'local'}).`
-          : 'Prévia de voz SpeechSynthesis pt-BR pronta.'
-        : 'Teste a narração pt-BR ou importe o WAV/MP3 exportado do Clipchamp.',
+          : `Narração ${pauta.narration.engine === 'edge' ? 'Edge neural' : 'Gemini TTS'} · voz ${
+              pauta.narration.voiceName || 'padrão'
+            }${pauta.narration.style && pauta.narration.engine !== 'edge' ? ` · estilo ${pauta.narration.style}` : ''}.`
+        : 'Gere a amostra de voz e confirme a narração pt-BR (Gemini TTS) antes de renderizar.',
     });
 
-    // 5. Duração e risco de reivindicação > 60s (Critério 15)
-    if (estSeconds > 60) {
+    // 5. Política de duração: o menor vídeo que ainda monetiza (Critério 15).
+    // Abaixo de 1 minuto fica fora do compartilhamento de receita do feed de
+    // Shorts; acima de 3 minutos deixa de ser Short.
+    const MONETIZATION_FLOOR_SEC = 60;
+    const SHORTS_CEILING_SEC = 180;
+    if (estSeconds > 0 && estSeconds < MONETIZATION_FLOOR_SEC) {
       items.push({
-        id: 'qc-monetization-60s',
-        label: 'Duração acima de 60s (monetização)',
+        id: 'qc-duration-floor',
+        label: 'Abaixo da faixa de monetização',
         severity: 'warning',
-        detail: `Duração estimada de ${estSeconds}s. Shorts > 1 min ficam inelegíveis se houver reivindicação ativa de direitos autorais; revise música e clipes.`,
+        detail: `Estimativa de ${estSeconds}s (${totalWords} palavras). Abaixo de 1 minuto o Short fica fora do compartilhamento de receita do feed; acrescente 1–2 cenas curtas.`,
+      });
+    } else if (estSeconds > SHORTS_CEILING_SEC) {
+      items.push({
+        id: 'qc-duration-ceiling',
+        label: 'Acima do limite de Short',
+        severity: 'warning',
+        detail: `Estimativa de ${estSeconds}s. Passando de 3 minutos o vídeo deixa de ser Short e sai do feed.`,
       });
     } else if (estSeconds > 0) {
       items.push({
         id: 'qc-duration',
-        label: 'Duração estimada do Short',
+        label: 'Duração na faixa monetizável',
         severity: 'pass',
-        detail: `${totalWords} palavras (~${estSeconds}s a 130 pal/min) dentro da faixa curta.`,
+        detail: `${totalWords} palavras (~${estSeconds}s a 130 pal/min), dentro da janela de 1 a 3 minutos. Lembre que acima de 1 minuto uma reivindicação ativa de direitos ainda pode bloquear o vídeo.`,
       });
     }
 

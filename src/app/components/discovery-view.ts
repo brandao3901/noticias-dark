@@ -130,22 +130,65 @@ const EDITORIALS: EditorialCategory[] = [
               Monitoramento de feeds públicos brasileiros
             </h2>
             <p class="mt-0.5 text-xs text-slate-400">
-              g1 · Folha de S.Paulo · UOL · R7 · Metrópoles · Celebridades &amp; Entretenimento · Gente (iG)
+              g1 · Folha de S.Paulo · UOL · R7 · Metrópoles · Agência Brasil · CNN · Poder360 · Google News · TecMundo · ge · ESPN
               @if (store.feedTotalCount() > 0) {
                 <span class="text-slate-300 font-mono-tabular">
                   · {{ store.feedRespondedCount() }} de {{ store.feedTotalCount() }} feeds responderam
                 </span>
               }
+              @if (store.feedNewestAt(); as newest) {
+                <span class="text-slate-300 font-mono-tabular">
+                  · mais recente {{ newest | date: 'dd/MM HH:mm' }}
+                </span>
+              }
+              @if (store.viralOnly()) {
+                <span class="text-[#f5c273]">· ordenado por viralidade</span>
+              }
             </p>
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
+            <!-- Filtro principal: virais no lugar da lista completa -->
+            <div class="flex items-center gap-1 rounded-lg border border-white/10 bg-[#0a0d12] p-1">
+              <button
+                type="button"
+                (click)="store.setViralOnly(true)"
+                class="rounded px-2.5 py-1.5 text-xs font-medium whitespace-nowrap"
+                [class.bg-[#e59a38]]="store.viralOnly()"
+                [class.text-[#0a0d12]]="store.viralOnly()"
+                [class.text-slate-300]="!store.viralOnly()"
+              >
+                🔥 Virais
+              </button>
+              <button
+                type="button"
+                (click)="store.setViralOnly(false)"
+                class="rounded px-2.5 py-1.5 text-xs font-medium whitespace-nowrap"
+                [class.bg-white/15]="!store.viralOnly()"
+                [class.text-white]="!store.viralOnly()"
+                [class.text-slate-400]="store.viralOnly()"
+              >
+                Tudo
+              </button>
+            </div>
             <input
               type="search"
               [formControl]="feedSearchControl"
               placeholder="Filtrar manchetes por termo..."
               class="w-60 rounded-lg border border-white/10 bg-[#0a0d12] px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-[#e59a38] focus:outline-none"
             />
+            <select
+              aria-label="Janela de atualidade das notícias"
+              [value]="store.feedMaxAgeHours()"
+              (change)="onMaxAgeChange($event)"
+              class="rounded-lg border border-white/10 bg-[#0a0d12] px-3 py-1.5 text-xs text-slate-100 focus:border-[#e59a38] focus:outline-none"
+            >
+              <option [value]="24">Últimas 24 h</option>
+              <option [value]="48">Últimas 48 h</option>
+              <option [value]="72">Últimos 3 dias</option>
+              <option [value]="168">Últimos 7 dias</option>
+              <option [value]="0">Sem filtro de data</option>
+            </select>
             <button
               type="button"
               (click)="store.loadFeeds(true)"
@@ -187,6 +230,11 @@ const EDITORIALS: EditorialCategory[] = [
             Feeds indisponíveis nesta rodada (os demais resultados permanecem ativos): {{ failedFeedOutlets().join(', ') }}.
           </p>
         }
+        @if (staleFeedOutlets().length > 0) {
+          <p class="mt-2 text-xs text-slate-400">
+            Fontes sem publicação recente (respondem, mas estão paradas): {{ staleFeedOutlets().join(', ') }}.
+          </p>
+        }
 
         @if (store.feedsLoading() && filteredFeedItems().length === 0) {
           <div class="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -212,7 +260,7 @@ const EDITORIALS: EditorialCategory[] = [
           </div>
         } @else {
           <div class="mt-5 divide-y divide-white/10 rounded-lg border border-white/10 bg-[#0a0d12]">
-            @for (item of filteredFeedItems().slice(0, 24); track item.id) {
+            @for (item of filteredFeedItems().slice(0, visibleCount()); track item.id) {
               <article class="flex flex-col justify-between gap-3 p-4 transition-colors hover:bg-white/[0.02] sm:flex-row sm:items-center">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2 text-xs text-slate-400">
@@ -225,6 +273,18 @@ const EDITORIALS: EditorialCategory[] = [
                   <h3 class="mt-1 text-sm font-semibold leading-snug text-slate-100">
                     {{ item.title }}
                   </h3>
+                  @if (item.viralScore) {
+                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span class="rounded bg-[#e59a38]/15 px-1.5 py-0.5 text-[10px] font-semibold font-mono-tabular text-[#f5c273]">
+                        🔥 {{ item.viralScore }}
+                      </span>
+                      @for (reason of item.viralReasons ?? []; track reason) {
+                        <span class="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400">
+                          {{ reason }}
+                        </span>
+                      }
+                    </div>
+                  }
                   @if (item.excerpt) {
                     <p class="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-400">
                       {{ item.excerpt }}
@@ -254,6 +314,22 @@ const EDITORIALS: EditorialCategory[] = [
               </article>
             }
           </div>
+
+          @if (filteredFeedItems().length > visibleCount()) {
+            <div class="mt-3 flex items-center justify-between gap-3">
+              <span class="text-xs text-slate-400 font-mono-tabular">
+                {{ visibleCount() }} de {{ filteredFeedItems().length }} manchetes
+              </span>
+              <button
+                type="button"
+                (click)="showMore()"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5 whitespace-nowrap"
+              >
+                <mat-icon class="text-[15px]">expand_more</mat-icon>
+                <span>Mostrar mais manchetes</span>
+              </button>
+            </div>
+          }
         }
       </section>
     </div>
@@ -268,6 +344,7 @@ export class DiscoveryView {
   readonly selectableEditorials: EditorialCategory[] = EDITORIALS.filter((e) => e !== 'Todas');
   readonly selectedEditorial = signal<EditorialCategory>('Todas');
   readonly feedQuery = signal('');
+  readonly visibleCount = signal(30);
 
   readonly feedSearchControl = new FormControl('', { nonNullable: true });
 
@@ -283,6 +360,18 @@ export class DiscoveryView {
       .filter((s) => s.status === 'error')
       .map((s) => s.outlet),
   );
+
+  /** Fontes que respondem mas não publicam nada recente. */
+  readonly staleFeedOutlets = computed(() => {
+    const statuses = this.store.feedStatuses();
+    const counts = new Map<string, number>();
+    for (const status of statuses) counts.set(status.outlet, (counts.get(status.outlet) ?? 0) + 1);
+
+    return statuses
+      .filter((s) => s.status === 'ok' && s.stale)
+      // Quando o veículo tem vários feeds, dizer qual seção parou (ex.: g1-ciencia).
+      .map((s) => ((counts.get(s.outlet) ?? 0) > 1 ? `${s.outlet} (${s.id})` : s.outlet));
+  });
 
   readonly filteredFeedItems = computed(() => {
     const ed = this.selectedEditorial();
@@ -343,5 +432,16 @@ export class DiscoveryView {
   resetFeedFilters(): void {
     this.selectedEditorial.set('Todas');
     this.feedSearchControl.setValue('');
+    this.visibleCount.set(30);
+  }
+
+  onMaxAgeChange(event: Event): void {
+    const hours = Number((event.target as HTMLSelectElement).value);
+    this.visibleCount.set(30);
+    this.store.setFeedMaxAge(Number.isFinite(hours) ? hours : 72);
+  }
+
+  showMore(): void {
+    this.visibleCount.update((count) => count + 30);
   }
 }

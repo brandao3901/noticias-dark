@@ -2,12 +2,13 @@ import { ChangeDetectionStrategy, Component, computed, inject, output, signal } 
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import type { MediaAsset, ScriptScene } from '../models/studio.models';
+import { NarrationVoicePicker } from './narration-voice-picker';
 import { SpeechPreview } from '../services/speech-preview';
 import { StudioStore, getSceneMediaList } from '../services/studio-store';
 
 @Component({
   selector: 'app-media-voice-view',
-  imports: [ReactiveFormsModule, MatIconModule],
+  imports: [ReactiveFormsModule, MatIconModule, NarrationVoicePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.activePauta(); as pauta) {
@@ -75,11 +76,57 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
                   <mat-icon class="text-[16px]">auto_fix_high</mat-icon>
                   <span>{{ store.mediaBusy() ? 'Buscando nomes...' : 'Buscar nomes citados e adicionar' }}</span>
                 </button>
+
+                <button
+                  type="button"
+                  (click)="refillAll(pauta.id)"
+                  [disabled]="store.mediaBusy()"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 disabled:opacity-45 whitespace-nowrap"
+                  title="Descarta a mídia atual de todas as cenas e busca de novo com as regras atuais"
+                >
+                  <mat-icon class="text-[16px]">restart_alt</mat-icon>
+                  <span>Refazer mídia das cenas</span>
+                </button>
               </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
-              <!-- Lista de cenas para vincular múltiplas mídias -->
+            <!-- Foto publicada pelo veículo: a imagem real do fato -->
+            @if (articleMedia().length) {
+              <div class="mt-4 rounded-lg border border-[#e59a38]/30 bg-[#e59a38]/[0.05] p-3.5">
+                <div class="text-xs font-semibold text-slate-100">Foto da matéria</div>
+                <p class="mt-0.5 text-[11px] leading-relaxed text-slate-400">
+                  Imagem publicada pelo próprio veículo. É a foto real do fato, mas o direito de uso é do
+                  veículo — o crédito e o link da matéria entram no manifesto de direitos.
+                </p>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  @for (asset of articleMedia(); track asset.id) {
+                    <div class="flex items-center gap-2 rounded border border-white/10 bg-[#0a0d12] p-1.5">
+                      <img
+                        [src]="asset.thumbUrl"
+                        [alt]="asset.title"
+                        referrerpolicy="no-referrer"
+                        class="h-12 w-9 rounded object-cover shrink-0 bg-black"
+                      />
+                      <div class="min-w-0 max-w-[220px]">
+                        <div class="truncate text-[11px] font-medium text-slate-200">{{ asset.title }}</div>
+                        <div class="truncate text-[10px] text-slate-500 font-mono-tabular">
+                          {{ asset.author }} · crédito no manifesto
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        (click)="attachToActiveScene(pauta.id, asset)"
+                        class="shrink-0 rounded-md bg-white/10 px-2.5 py-1 text-[11px] font-medium text-slate-100 hover:bg-[#e59a38] hover:text-[#0a0d12]"
+                      >
+                        Adicionar à Cena {{ activeSceneOrder() }}
+                      </button>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+
+            <div class="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">              <!-- Lista de cenas para vincular múltiplas mídias -->
               <div class="lg:col-span-5 space-y-2.5">
                 <div class="flex items-center justify-between text-xs font-medium text-slate-300">
                   <span>Cenas do roteiro</span>
@@ -424,45 +471,15 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
           </div>
 
           @if (pauta.narration.mode === 'tts') {
-            <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3 items-end">
-              <div class="md:col-span-2">
-                <label class="block text-xs font-medium text-slate-300">Voz disponível no sistema</label>
-                <select
-                  [value]="speech.selectedVoiceName()"
-                  (change)="onVoiceChange(pauta.id, $event)"
-                  class="mt-1 w-full rounded-lg border border-white/10 bg-[#0a0d12] px-3 py-2 text-xs text-slate-100 focus:border-[#e59a38] focus:outline-none"
-                >
-                  @for (v of speech.voices(); track v.name) {
-                    <option [value]="v.name">{{ v.name }} ({{ v.lang }})</option>
-                  }
-                </select>
-              </div>
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  (click)="testVoice(pauta.id)"
-                  [disabled]="!pauta.script?.scenes?.length"
-                  class="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3.5 py-2 text-xs font-medium text-slate-100 hover:bg-white/15 disabled:opacity-40 whitespace-nowrap"
-                >
-                  <mat-icon class="text-[16px]">record_voice_over</mat-icon>
-                  <span>Testar voz</span>
-                </button>
-                @if (speech.isPlaying()) {
-                  <button
-                    type="button"
-                    (click)="speech.stop()"
-                    class="inline-flex items-center gap-1 rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-950/30"
-                  >
-                    <mat-icon class="text-[16px]">stop</mat-icon>
-                    <span>Parar</span>
-                  </button>
-                }
-              </div>
+            <div class="mt-4 rounded-lg border border-white/10 bg-[#0a0d12] p-3.5">
+              <app-narration-voice-picker />
+              <p class="mt-2 text-[11px] text-slate-500">
+                Esta é a voz que vai para o MP4 renderizado no servidor. A prévia do navegador
+                (SpeechSynthesis) não é usada no arquivo final.
+              </p>
             </div>
-            @if (speech.voices().length > 0 && !speech.hasPtBrVoice()) {
-              <div class="mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 px-3.5 py-2.5 text-xs text-amber-200">
-                Nenhuma voz em português (pt-BR) foi encontrada neste navegador. Vozes em inglês podem ignorar acentos; para leitura fiel em português, abra no Microsoft Edge (vozes Francisca/Antonio/Daniel) ou use a aba <strong>Fluxo assistido Clipchamp</strong>.
-              </div>
+            @if (speech.lastAudioError()) {
+              <p class="mt-2 text-xs text-red-300">{{ speech.lastAudioError() }}</p>
             }
           } @else {
             <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -516,7 +533,7 @@ export class MediaVoiceView {
 
   readonly provider = signal<'wikimedia' | 'internet_archive'>('wikimedia');
   readonly mediaKind = signal<'image' | 'video'>('image');
-  readonly autoMaxPerScene = signal<number>(2);
+  readonly autoMaxPerScene = signal<number>(1);
   readonly autoKindPref = signal<'both' | 'image' | 'video'>('both');
   readonly selectedSceneId = signal<string>('');
   readonly searchResults = signal<MediaAsset[]>([]);
@@ -538,6 +555,10 @@ export class MediaVoiceView {
   });
 
   readonly activeSceneOrder = computed(() => this.activeScene()?.order ?? 1);
+
+  readonly articleMedia = computed<MediaAsset[]>(
+    () => this.store.activePauta()?.dossier.articleMedia ?? [],
+  );
 
   sceneAssets(scene: ScriptScene): MediaAsset[] {
     return getSceneMediaList(scene);
@@ -571,6 +592,16 @@ export class MediaVoiceView {
       maxPerScene: this.autoMaxPerScene(),
       kindPreference: this.autoKindPref(),
     });
+  }
+
+  /** Descarta a mídia de todas as cenas e busca de novo. */
+  async refillAll(pautaId: string): Promise<void> {
+    await this.store.refillAllScenesMedia(pautaId, {
+      maxPerScene: this.autoMaxPerScene(),
+      kindPreference: this.autoKindPref(),
+    });
+    this.selectedSceneId.set('');
+    this.searchResults.set([]);
   }
 
   async runAutoFillScene(pautaId: string, sceneId: string): Promise<void> {

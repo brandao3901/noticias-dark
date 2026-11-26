@@ -42,3 +42,15 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Segredos locais (nunca versionar)
+.env
+.env.local
+.env.*.local
+!.env.example
+# Token OAuth do YouTube obtido pelo app
+.youtube-token.json
+
+# Artefatos gerados pelo servidor
+/projects
+/release

@@ -43,7 +43,7 @@ import { StudioStore, extractOrderedEntityNames } from '../services/studio-store
                 [class.text-[#0a0d12]]="selectedMode() === 'short'"
                 [class.text-slate-300]="selectedMode() !== 'short'"
               >
-                Versão curta (45–60s · 90–140 pal.)
+                Curto (45–58 s)
               </button>
               <button
                 type="button"
@@ -53,7 +53,7 @@ import { StudioStore, extractOrderedEntityNames } from '../services/studio-store
                 [class.text-[#0a0d12]]="selectedMode() === 'expanded'"
                 [class.text-slate-300]="selectedMode() !== 'expanded'"
               >
-                Versão expandida (90–150s · 180–230 pal.)
+                Monetizável (60–75 s)
               </button>
             </div>
 

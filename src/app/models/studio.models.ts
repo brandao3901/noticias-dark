@@ -7,6 +7,7 @@ export type PipelineStage =
   | 'VOICE_READY'
   | 'RENDERED'
   | 'APPROVED'
+  | 'PUBLISHED'
   | 'REJECTED';
 
 export type ScriptVersionMode = 'short' | 'expanded';
@@ -29,6 +30,8 @@ export interface FeedSourceStatus {
   itemCount: number;
   errorMessage?: string;
   checkedAt: string;
+  /** Feed respondeu, mas o item mais recente é antigo (fonte parada). */
+  stale?: boolean;
 }
 
 export interface NewsOutletFeedItem {
@@ -40,6 +43,11 @@ export interface NewsOutletFeedItem {
   publishedAt: string;
   excerpt: string;
   author?: string;
+  /** Ranking de viralidade (0–10+), quando o filtro de virais está ativo. */
+  viralScore?: number;
+  viralReasons?: string[];
+  /** Quantos outros veículos publicaram algo com os mesmos termos. */
+  sourceCount?: number;
 }
 
 export interface GdeltArticle {
@@ -63,6 +71,10 @@ export interface ExtractedSource {
   fetchedAt: string;
   status: 'ok' | 'limited' | 'social_x' | 'blocked' | 'error';
   limitationNote?: string;
+  /** Imagem principal da matéria (og:image / twitter:image / JSON-LD). */
+  imageUrl?: string;
+  imageAlt?: string;
+  imageCredit?: string;
 }
 
 export interface GeminiUrlContextResult {
@@ -91,6 +103,8 @@ export interface DossierSourceItem {
 
 export interface DossierEvidence {
   primaryExtraction?: ExtractedSource;
+  /** Imagem da própria matéria (foto do fato), quando o veículo publica. */
+  articleMedia?: MediaAsset[];
   gdeltStatus: 'idle' | 'ok' | 'error' | 'rate_limited';
   gdeltMessage?: string;
   gdeltArticles: GdeltArticle[];
@@ -105,12 +119,14 @@ export interface DossierEvidence {
 
 export interface MediaAsset {
   id: string;
-  provider: 'wikimedia' | 'internet_archive' | 'pexels';
+  provider: 'wikimedia' | 'internet_archive' | 'pexels' | 'article';
   kind: 'image' | 'video';
   title: string;
   pageUrl: string;
   mediaUrl: string;
   thumbUrl: string;
+  /** Descricao/categorias do acervo: melhora muito o casamento com a cena. */
+  description?: string;
   author: string;
   licenseName: string;
   licenseUrl: string;
@@ -157,7 +173,11 @@ export interface EditableScript {
 
 export interface NarrationState {
   mode: 'tts' | 'clipchamp';
+  /** Motor de voz: Gemini TTS (padrao) ou Edge neural (reserva). */
+  engine?: 'gemini' | 'edge';
   voiceName: string;
+  /** Preset de estilo do Gemini TTS (ancora, explicativo, urgente, leve, neutro). */
+  style?: string;
   rate: number;
   audioFileName?: string;
   audioDurationSec?: number;
@@ -201,6 +221,16 @@ export interface PautaRecord {
   qc?: QcReport;
   approvalNote: string;
   approvedAt?: string;
+  /** Último pacote renderizado e arquivado no servidor (spec §4.12). */
+  render?: {
+    seconds: number;
+    videoUrl: string;
+    thumbnailUrl?: string | null;
+    mode: 'final' | 'preview';
+    renderedAt: string;
+  };
+  /** Publicação no YouTube (e demais plataformas, quando liberadas). */
+  youtube?: YoutubePublishState;
   analyticsNotes?: {
     engagedViews?: number;
     avgViewDurationSec?: number;
@@ -215,4 +245,81 @@ export interface ProviderConfigStatus {
   geminiQuotaPaused: boolean;
   geminiCooldownUntil?: string;
   activeModel: string;
+  /** Tarja de identidade impressa no vídeo (configurável por CHANNEL_LABEL). */
+  channelLabel?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Publicação (YouTube, TikTok, Instagram)
+// ---------------------------------------------------------------------------
+
+export type PublishPlatform = 'youtube' | 'tiktok' | 'instagram';
+
+/** Metadados do post: o que vai como título, descrição/legenda e tags. */
+export interface PublishMetadata {
+  title: string;
+  description: string;
+  tags: string[];
+  categoryId: string;
+  madeForKids: boolean;
+  containsSyntheticMedia: boolean;
+  titleAlternatives: string[];
+  generatedBy: 'gemini' | 'deterministico';
+}
+
+export interface YoutubePublishState {
+  videoId: string;
+  url: string;
+  privacyStatus: 'public' | 'unlisted' | 'private';
+  publishedAt: string;
+  scheduledFor?: string;
+  thumbnailSet: boolean;
+  captionsSet: boolean;
+}
+
+export interface TiktokPublishState {
+  publishId: string;
+  publishedAt: string;
+  privacy: string;
+  url?: string;
+}
+
+export interface InstagramPublishState {
+  mediaId: string;
+  publishedAt: string;
+  permalink?: string;
+}
+
+/** Registro do pacote publicado, gravado em `publish.json` dentro da pauta. */
+export interface PublishRecord {
+  schemaVersion: 'canal-dark-publish/0.1';
+  updatedAt: string;
+  metadata: PublishMetadata;
+  youtube?: YoutubePublishState;
+  tiktok?: TiktokPublishState;
+  instagram?: InstagramPublishState;
+  /** Histórico de capas trocadas manualmente (auxílio A/B do Studio). */
+  thumbnailHistory?: Array<{ file: string; setAt: string }>;
+  requests?: Array<{ platform: PublishPlatform; at: string; detail: string }>;
+}
+
+export interface ScheduleEntry {
+  id: string;
+  pautaId: string;
+  platforms: PublishPlatform[];
+  whenIso: string;
+  privacyStatus: 'public' | 'unlisted' | 'private';
+  metadata: PublishMetadata;
+  status: 'scheduled' | 'done' | 'cancelled' | 'failed';
+  createdAt: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface AutopilotConfig {
+  enabled: boolean;
+  /** Só publica pauta já aprovada por humano. Desligar não é permitido no MVP. */
+  requireApproval: boolean;
+  maxPerDay: number;
+  platforms: PublishPlatform[];
 }
