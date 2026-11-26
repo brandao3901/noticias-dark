@@ -1284,3 +1284,23 @@ Kore (firme, feminina) · Charon (grave, masculina) · Puck (jovem, masculina) �
 
 
 
+
+---
+
+## 25. `CanalDark.bat`: um arquivo para tudo (26/11/2026)
+
+Duplo clique resolve o ambiente inteiro, em ordem, com mensagens claras:
+
+1. **Node.js** — se faltar, explica onde instalar e para.
+2. **Dependências do app** — `npm install` só quando `node_modules` não existe.
+3. **FFmpeg** — avisa (sem travar) se não estiver no PATH.
+4. **Python + Kokoro** — confere versão, instala `requirements.txt` se preciso e baixa os
+   modelos (~354 MB) apenas na primeira vez; qualquer falha aqui **não impede** o app de
+   funcionar (cai para Gemini/Edge).
+5. **Servidor** — se a porta 3000 já estiver ocupada, só abre o navegador; senão sobe o app
+   e abre o navegador após compilar.
+
+Variável `CANAL_DARK_NO_BROWSER=1` impede a abertura automática (útil em teste/automação).
+
+Testado nos dois caminhos: servidor já rodando (sai em 0 sem duplicar processo) e partida
+fria (app no ar em 6 s, voz do canal ativa).

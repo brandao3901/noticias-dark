@@ -84,8 +84,12 @@ Abre em **http://localhost:3000** com hot reload. Para expor só na máquina loc
 npx ng serve --host 127.0.0.1 --port 3000
 ```
 
-**No Windows, sem terminal:** dê duplo clique em **`iniciar.cmd`** (desenvolvimento) ou
-**`iniciar-producao.cmd`** (compila e serve). Os dois detectam se o servidor já está no ar e, nesse caso,
+**No Windows, sem terminal:** duplo clique em **`CanalDark.bat`** — ele faz tudo:
+confere Node, dependências, FFmpeg e Python, instala o que faltar, baixa os modelos de voz
+na primeira vez (com aviso), sobe o app e abre o navegador.
+
+Opções mais simples também continuam: **`iniciar.cmd`** (desenvolvimento) e
+**`iniciar-producao.cmd`** (compila e serve). Todos detectam servidor já no ar e, nesse caso,
 apenas abrem o navegador.
 
 ## Iniciar em produção (build servido pelo Express)
