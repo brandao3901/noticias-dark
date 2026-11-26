@@ -4,13 +4,13 @@ import { StudioStore } from '../services/studio-store';
 
 interface TtsVoiceView {
   id: string;
-  engine: 'gemini' | 'edge';
+  engine: 'kokoro' | 'gemini' | 'edge';
   label: string;
   description: string;
 }
 
 interface TtsStatusView {
-  defaultEngine: 'gemini' | 'edge';
+  defaultEngine: 'kokoro' | 'gemini' | 'edge';
   defaultStyle: string;
   voices: TtsVoiceView[];
   styles: Array<{ id: string; label: string }>;
@@ -54,6 +54,7 @@ interface TtsStatusView {
             (change)="onEngine($event)"
             class="rounded border border-white/15 bg-[#111620] px-2 py-1 text-xs text-slate-200 focus:border-[#e59a38] focus:outline-none"
           >
+            <option value="kokoro">Kokoro offline (voz do canal)</option>
             <option value="gemini">Gemini TTS (recomendado)</option>
             <option value="edge">Edge neural (reserva)</option>
           </select>
@@ -114,12 +115,14 @@ export class NarrationVoicePicker {
   readonly loadingSample = signal(false);
   readonly error = signal<string | null>(null);
 
-  readonly engine = computed<'gemini' | 'edge'>(() => {
+  readonly engine = computed<'kokoro' | 'gemini' | 'edge'>(() => {
     const narration = this.pauta()?.narration;
-    if (narration?.engine === 'edge' || narration?.engine === 'gemini') return narration.engine;
+    if (narration?.engine === 'kokoro' || narration?.engine === 'edge' || narration?.engine === 'gemini') {
+      return narration.engine;
+    }
     // Pauta antiga com voz Edge salva no nome: respeita o prefixo.
     if (narration?.voiceName?.startsWith('pt-BR-')) return 'edge';
-    return this.status()?.defaultEngine ?? 'gemini';
+    return this.status()?.defaultEngine ?? 'kokoro';
   });
 
   readonly voicesForEngine = computed(() => {
@@ -168,14 +171,16 @@ export class NarrationVoicePicker {
 
   onEngine(event: Event): void {
     const value = (event.target as HTMLSelectElement).value;
-    const engine = value === 'edge' ? 'edge' : 'gemini';
+    const engine: 'kokoro' | 'gemini' | 'edge' =
+      value === 'edge' ? 'edge' : value === 'kokoro' ? 'kokoro' : 'gemini';
     const pauta = this.pauta();
     if (!pauta) return;
 
     const voice = this.status()?.voices.find((item) => item.engine === engine);
+    const fallbackVoice = engine === 'edge' ? 'pt-BR-AntonioNeural' : engine === 'kokoro' ? 'blend' : 'Kore';
     this.store.updateNarrationState(pauta.id, {
       engine,
-      voiceName: voice?.id ?? (engine === 'edge' ? 'pt-BR-AntonioNeural' : 'Kore'),
+      voiceName: voice?.id ?? fallbackVoice,
     });
   }
 

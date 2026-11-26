@@ -2,9 +2,9 @@
   "voice": {
     "engine": "kokoro",
     "a": "pm_alex",
-    "b": "pf_dora",
-    "mix": 0.7,
-    "speed": 1.0,
+    "b": "pm_santa",
+    "mix": 0.35,
+    "speed": 0.95,
     "lang": "pt-br",
     "file": "voz_canal.npy"
   },

@@ -141,6 +141,36 @@ with tab_video:
 
             st.markdown(f"**{project.get('title', '')}** · {project.get('editorial', '')} · estágio `{project.get('stage')}`")
 
+            # Voz do render: por padrão a voz do canal salva no config.json.
+            voice_config = read_config().get("voice", {})
+            blend_label = (
+                f"Voz do canal · {voice_config.get('a', '?')} "
+                f"{round(float(voice_config.get('mix', 0.7)) * 100)}% + "
+                f"{voice_config.get('b', '?')} "
+                f"{round((1 - float(voice_config.get('mix', 0.7))) * 100)}%"
+            )
+            options: list[tuple[str, str, str]] = [("blend", "kokoro", blend_label)]
+            try:
+                catalog = api("GET", "/api/config/status").get("tts", {}).get("voices", [])
+                for voice in catalog:
+                    if voice.get("engine") == "kokoro" and voice.get("id") != "blend":
+                        options.append((voice["id"], "kokoro", f"Kokoro · {voice.get('label')}"))
+                for voice in catalog:
+                    if voice.get("engine") in ("gemini", "edge"):
+                        options.append(
+                            (voice["id"], voice["engine"], f"{voice.get('engine')} · {voice.get('label')}")
+                        )
+            except Exception:  # noqa: BLE001 - catálogo é opcional
+                pass
+
+            chosen_voice = st.selectbox(
+                "Voz deste vídeo",
+                options=[item[2] for item in options],
+                index=0,
+                help="A voz do canal vem do Estúdio de voz (config.json + voz_canal.npy).",
+            )
+            selected = options[[item[2] for item in options].index(chosen_voice)]
+
             with st.form("script_form"):
                 st.markdown("#### Roteiro (edite antes de renderizar)")
                 edited: list[str] = []
@@ -168,7 +198,11 @@ with tab_video:
 
             if render:
                 try:
-                    started = api("POST", f"/api/studio/render/{pauta_id}", {})
+                    started = api(
+                        "POST",
+                        f"/api/studio/render/{pauta_id}",
+                        {"engine": selected[1], "voice": selected[0]},
+                    )
                     job = started.get("job", {})
                     st.caption(f"Job {job.get('id')} · modo `{started.get('mode')}`")
 

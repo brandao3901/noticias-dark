@@ -1408,6 +1408,19 @@ app.post('/api/studio/render/:id', async (req, res) => {
     return;
   }
 
+  // O console pode forçar motor/voz (ex.: usar a voz do canal recém-salva).
+  const payload = (req.body ?? {}) as Record<string, unknown>;
+  const requestedEngine = payload['engine'];
+  const requestedVoice = payload['voice'];
+  const engineOverride =
+    requestedEngine === 'kokoro' || requestedEngine === 'gemini' || requestedEngine === 'edge'
+      ? (requestedEngine as 'kokoro' | 'gemini' | 'edge')
+      : undefined;
+  const voiceOverride =
+    typeof requestedVoice === 'string' && requestedVoice.trim()
+      ? requestedVoice.trim()
+      : undefined;
+
   // Aprovada -> pacote final; caso contrário, prévia (não passa pelo gate).
   const isApproved = project.stage === 'APPROVED';
   const scenes: RenderSceneInput[] = scriptScenes.slice(0, 20).map((scene) => ({
@@ -1431,8 +1444,8 @@ app.post('/api/studio/render/:id', async (req, res) => {
     srtContent: buildSrtFromScenes(scriptScenes),
     narration: {
       enabled: true,
-      engine: project.narration?.engine,
-      voice: project.narration?.voiceName,
+      engine: engineOverride ?? project.narration?.engine,
+      voice: voiceOverride ?? project.narration?.voiceName,
       style: project.narration?.style,
       rate: project.narration?.rate,
       minSeconds: 0,

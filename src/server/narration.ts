@@ -841,6 +841,39 @@ export async function synthesizeVoicePreview(params: {
   let pcm: Buffer;
   let model: string | undefined;
 
+  if (engine === 'kokoro') {
+    // Amostra com a mesma voz do render (inclui a mistura salva em voz_canal.npy).
+    const tmpDir = join(projectsRoot(), '.preview');
+    const synthesized = await synthesizeKokoroWav({
+      text: PREVIEW_TEXT,
+      outDir: tmpDir,
+      index: 99,
+      voice: voice.id,
+      speed: 1,
+    });
+    model = 'kokoro-onnx';
+    pcm = await decodeToPcm(synthesized.wavPath, join(tmpDir, 'preview-kokoro.pcm'));
+
+    const kokoroHeader = Buffer.alloc(44);
+    kokoroHeader.write('RIFF', 0, 'ascii');
+    kokoroHeader.writeUInt32LE(36 + pcm.length, 4);
+    kokoroHeader.write('WAVE', 8, 'ascii');
+    kokoroHeader.write('fmt ', 12, 'ascii');
+    kokoroHeader.writeUInt32LE(16, 16);
+    kokoroHeader.writeUInt16LE(1, 20);
+    kokoroHeader.writeUInt16LE(1, 22);
+    kokoroHeader.writeUInt32LE(NARRATION_SAMPLE_RATE, 24);
+    kokoroHeader.writeUInt32LE(NARRATION_SAMPLE_RATE * 2, 28);
+    kokoroHeader.writeUInt16LE(2, 32);
+    kokoroHeader.writeUInt16LE(16, 34);
+    kokoroHeader.write('data', 36, 'ascii');
+    kokoroHeader.writeUInt32LE(pcm.length, 40);
+
+    const wav = Buffer.concat([kokoroHeader, pcm]);
+    previewCache.set(cacheKeyValue, { wav, at: Date.now() });
+    return { wav, engine, voice: voice.id, model };
+  }
+
   if (engine === 'gemini') {
     const speech = await synthesizeSpeechWithGemini({
       text: PREVIEW_TEXT,
