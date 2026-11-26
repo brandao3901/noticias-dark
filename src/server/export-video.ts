@@ -540,7 +540,12 @@ export async function renderVerticalShortMp4(params: {
           domain: source?.domain,
           entity: (scene as { detectedEntities?: string[] }).detectedEntities?.[0],
         });
-        const beatDur = Math.max(1.2, sceneDur / Math.max(1, beats.length));
+        // Ritmo: um cartão a cada ~3 s, no máximo 3 por cena. A narração pode
+        // ter uma frase só; alternamos tipo/cartão para o vídeo não ficar parado.
+        const maxPerScene = params.scenes.length > 10 ? 1 : 3;
+        const targetBeats = Math.max(1, Math.min(maxPerScene, Math.round(sceneDur / 3)));
+        const useBeats = Array.from({ length: targetBeats }, (_, index) => beats[index % beats.length] ?? beats[0] ?? {});
+        const beatDur = Math.max(1.2, sceneDur / Math.max(1, useBeats.length));
         const domains = Array.from(
           new Set((params.sources ?? []).map((item) => item.domain).filter(Boolean)),
         ).slice(0, 2);
@@ -554,18 +559,18 @@ export async function renderVerticalShortMp4(params: {
           .replace(/\s+/g, ' ')
           .slice(0, 90);
 
-        for (let beatIndex = 0; beatIndex < beats.length; beatIndex++) {
+        for (let beatIndex = 0; beatIndex < useBeats.length; beatIndex++) {
           const segName = `seg_${String(segIdx++).padStart(3, '0')}.mp4`;
           const segPath = join(workDir, segName);
 
           try {
             const png = renderNewsCard({
               channelLabel: channelLabel(),
-              beat: beats[beatIndex],
+              beat: useBeats[beatIndex],
               source,
               headline,
               sourcesLine,
-              focus: beatIndex === 0 ? 'type' : 'card',
+              focus: beatIndex % 2 === 0 ? 'type' : 'card',
             });
             const pngPath = join(workDir, `card_${segIdx}.png`);
             await writeFile(pngPath, png);
@@ -624,7 +629,7 @@ export async function renderVerticalShortMp4(params: {
           params.onProgress?.(
             'montagem',
             44 + (segmentFiles.length / Math.max(1, totalSegments)) * 26,
-            `Cartão ${beatIndex + 1}/${beats.length} da cena ${sceneIndex + 1}…`,
+            `Cartão ${beatIndex + 1}/${useBeats.length} da cena ${sceneIndex + 1}…`,
           );
         }
         continue;

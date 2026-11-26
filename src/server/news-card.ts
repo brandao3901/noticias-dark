@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { Resvg } from '@resvg/resvg-js';
 
 /**
@@ -125,6 +126,15 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
 
   // ---- Bloco tipográfico -------------------------------------------------
   let typeBottom = 240;
+  if (!showType && input.beat.word) {
+    // Foco no cartão: uma palavra grande no topo evita o frame vazio.
+    const wordText = input.beat.word.toUpperCase();
+    const wordSize = fitSize(wordText, CONTENT_W, 72, 40);
+    parts.push(
+      `<text x="${W / 2}" y="300" text-anchor="middle" font-family="Arial" font-size="${wordSize}" font-weight="700" letter-spacing="-1" fill="${TEXT}">${escapeXml(wordText)}</text>`,
+    );
+    typeBottom = 320;
+  }
   if (showType) {
     let y = 330;
     if (input.beat.pill) {
@@ -158,8 +168,8 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
   }
 
   // ---- Cartão da matéria (altura calculada, centralizado) ----------------
-  const cardX = 70;
-  const cardW = W - 140;
+  const cardX = showType ? 70 : 44;
+  const cardW = showType ? W - 140 : W - 88;
   const innerX = cardX + 44;
   const innerW = cardW - 88;
   const cardBody: string[] = [];
@@ -211,12 +221,11 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
 
   const cardHeight = Math.max(240, cursorY + 44);
   const barTopForCard = H - 210;
-  const availableTop = showType ? typeBottom + 30 : 250;
+  const availableTop = typeBottom + 30;
   const availableBottom = barTopForCard - 36;
-  const cardTop = Math.max(
-    availableTop,
-    availableTop + Math.max(0, (availableBottom - availableTop - cardHeight) / 2),
-  );
+  // Centraliza o cartão no espaço que sobra: sem vazio grande em cima ou embaixo.
+  const cardTop =
+    availableTop + Math.max(0, (availableBottom - availableTop - cardHeight) / 2);
 
   parts.push(
     `<g transform="translate(0, ${Math.round(cardTop)})">`,
@@ -254,11 +263,19 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`;
 }
 
+// Carregar as fontes do sistema a cada cartão custava ~40% do tempo do painel.
+const FONT_FILES = ['C:/Windows/Fonts/arial.ttf', 'C:/Windows/Fonts/arialbd.ttf'].filter((path) =>
+  existsSync(path),
+);
+const FONT_OPTIONS = FONT_FILES.length
+  ? { fontFiles: FONT_FILES, loadSystemFonts: false, defaultFontFamily: 'Arial' }
+  : { loadSystemFonts: true, defaultFontFamily: 'Arial' };
+
 export function renderNewsCard(input: NewsCardInput): Buffer {
   const svg = buildNewsCardSvg(input);
   return new Resvg(svg, {
     fitTo: { mode: 'width', value: W },
-    font: { loadSystemFonts: true, defaultFontFamily: 'Arial' },
+    font: FONT_OPTIONS,
   })
     .render()
     .asPng();

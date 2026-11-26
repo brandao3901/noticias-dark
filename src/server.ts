@@ -828,6 +828,9 @@ async function executeRender(
     ttsVoice: result.ttsVoice,
     ttsModel: result.ttsModel,
     ttsFallback: result.ttsFallback,
+    videoMode: result.videoMode ?? spec.videoMode ?? 'fotos',
+    cuts: result.cuts,
+    avgShotSec: result.avgShotSec,
   };
 }
 
@@ -1530,6 +1533,11 @@ app.post('/api/studio/render/:id', async (req, res) => {
     typeof requestedVoice === 'string' && requestedVoice.trim()
       ? requestedVoice.trim()
       : undefined;
+  const requestedMode = payload['videoMode'];
+  const videoModeOverride =
+    requestedMode === 'cards' || requestedMode === 'documento' || requestedMode === 'fotos'
+      ? (requestedMode as 'cards' | 'documento' | 'fotos')
+      : undefined;
 
   // Aprovada -> pacote final; caso contrário, prévia (não passa pelo gate).
   const isApproved = project.stage === 'APPROVED';
@@ -1563,7 +1571,7 @@ app.post('/api/studio/render/:id', async (req, res) => {
     },
     dynamics: project.narration?.dynamics ?? 'alta',
     captions: project.narration?.captions ?? 'karaoke',
-    videoMode: project.narration?.videoMode ?? 'fotos',
+    videoMode: videoModeOverride ?? project.narration?.videoMode ?? 'fotos',
     headline: project.script?.hook || project.script?.suggestedTitle,
     closingText: project.script?.closing,
     editorial: project.editorial,

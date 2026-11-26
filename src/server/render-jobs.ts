@@ -25,6 +25,11 @@ export interface RenderJobResult {
   ttsVoice?: string;
   ttsModel?: string;
   ttsFallback?: string;
+  /** Formato visual do vídeo (fotos, documento ou cartões). */
+  videoMode?: string;
+  /** Cortes e ritmo, para conferência rápida na interface. */
+  cuts?: number;
+  avgShotSec?: number;
 }
 
 export interface PublishJobResult {
@@ -168,8 +173,21 @@ export function enqueueJob(params: {
   label: string;
   pautaId: string | null;
   mode?: 'final' | 'preview';
+  reuseIfActive?: boolean;
   run: (report: ProgressReporter) => Promise<JobResult>;
 }): RenderJobPublic {
+  // Clique repetido em "Gerar vídeo" não pode empilhar renders da mesma pauta:
+  // a fila é serial e o app parecia travado enquanto os jobs esperavam.
+  if (params.reuseIfActive && params.pautaId) {
+    const active = Array.from(jobs.values()).find(
+      (item) =>
+        item.pautaId === params.pautaId &&
+        item.kind === params.kind &&
+        (item.status === 'queued' || item.status === 'running'),
+    );
+    if (active) return toPublic(active);
+  }
+
   jobCounter += 1;
   const now = new Date().toISOString();
 
@@ -204,7 +222,7 @@ export function enqueueRender(params: {
   mode: 'final' | 'preview';
   run: (report: ProgressReporter) => Promise<RenderJobResult>;
 }): RenderJobPublic {
-  return enqueueJob({ ...params, kind: 'render' });
+  return enqueueJob({ ...params, kind: 'render', reuseIfActive: true });
 }
 
 async function processQueue(): Promise<void> {
