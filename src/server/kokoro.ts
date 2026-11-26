@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -67,6 +67,128 @@ export interface KokoroVoiceConfig {
   file: string;
 }
 
+/** Voz do canal: vale para TODAS as pautas (o render segue isto). */
+export interface ChannelVoice {
+  engine: 'kokoro' | 'gemini' | 'edge';
+  voice: string;
+}
+
+function readConfigRaw(): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/** Leitura síncrona: `defaultTtsEngine()` roda em contexto sem await. */
+export function readChannelVoiceSync(): ChannelVoice {
+  const raw = readConfigRaw()['default'] as Partial<ChannelVoice> | undefined;
+  const engine = raw?.engine;
+  return {
+    engine: engine === 'gemini' || engine === 'edge' || engine === 'kokoro' ? engine : 'kokoro',
+    voice: typeof raw?.voice === 'string' && raw.voice.trim() ? raw.voice.trim() : 'blend',
+  };
+}
+
+export async function writeChannelVoice(
+  engine: ChannelVoice['engine'],
+  voice: string,
+): Promise<ChannelVoice> {
+  const raw = readConfigRaw();
+  const next = { ...raw, default: { engine, voice } };
+  await writeFile(CONFIG_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  return { engine, voice };
+}
+
+/** Grava a mistura em `voz_canal.npy` + `config.json` (via Python). */
+export async function saveChannelBlend(params: {
+  a: string;
+  b: string;
+  mix: number;
+  speed: number;
+  lang?: string;
+}): Promise<{ config: KokoroVoiceConfig; stdout: string }> {
+  const script = join(ROOT, 'python', 'voice_studio.py');
+  if (!existsSync(script)) throw new Error(`Script não encontrado: ${script}`);
+
+  const { stdout } = await execFileAsync(
+    PYTHON_BIN,
+    [
+      script,
+      '--save',
+      '--a',
+      params.a,
+      '--b',
+      params.b,
+      '--mix',
+      String(params.mix),
+      '--speed',
+      String(params.speed),
+      '--lang',
+      params.lang ?? 'pt-br',
+    ],
+    { cwd: ROOT, timeout: 120_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  const line = stdout
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value.startsWith('{'))
+    .pop();
+  if (!line) throw new Error('O estúdio de voz não devolveu resultado.');
+  const parsed = JSON.parse(line) as { ok?: boolean; config?: KokoroVoiceConfig; message?: string };
+  if (!parsed.ok || !parsed.config) throw new Error(parsed.message ?? 'Falha ao salvar a voz.');
+  return { config: parsed.config, stdout };
+}
+
+/** Prévia de uma mistura qualquer, sem gravar nada. */
+export async function previewChannelBlend(params: {
+  a: string;
+  b: string;
+  mix: number;
+  speed: number;
+  text?: string;
+  lang?: string;
+}): Promise<Buffer> {
+  const script = join(ROOT, 'python', 'voice_studio.py');
+  if (!existsSync(script)) throw new Error(`Script não encontrado: ${script}`);
+  if (!kokoroModelsReady()) {
+    throw new Error('Kokoro indisponível: rode python python/download_models.py.');
+  }
+
+  const outPath = join(ROOT, 'build', `preview-${Date.now()}.wav`);
+  await mkdir(join(ROOT, 'build'), { recursive: true });
+
+  const args = [
+    script,
+    '--preview',
+    '--a',
+    params.a,
+    '--b',
+    params.b,
+    '--mix',
+    String(params.mix),
+    '--speed',
+    String(params.speed),
+    '--out',
+    outPath,
+  ];
+  if (params.text?.trim()) args.push('--text', params.text.trim().slice(0, 400));
+  if (params.lang) args.push('--lang', params.lang);
+
+  await execFileAsync(PYTHON_BIN, args, {
+    cwd: ROOT,
+    timeout: 180_000,
+    windowsHide: true,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+
+  const wav = await readFile(outPath);
+  await rm(outPath, { force: true }).catch(() => undefined);
+  return wav;
+}
+
 /** Os dois arquivos somam ~354 MB; tamanho mínimo pega download truncado. */
 export function kokoroModelsReady(): boolean {
   try {
@@ -119,6 +241,10 @@ export async function synthesizeKokoroWav(params: {
   index: number;
   voice?: string;
   speed?: number;
+  /** Mistura avulsa (prévia): sobrepõe a voz salva. */
+  voiceA?: string;
+  voiceB?: string;
+  mix?: number;
   timeoutMs?: number;
 }): Promise<KokoroSynthesis> {
   if (!kokoroModelsReady()) {
@@ -150,6 +276,10 @@ export async function synthesizeKokoroWav(params: {
     '--lang',
     config?.lang ?? 'pt-br',
   ];
+  if (params.voiceA && params.voiceB) {
+    args.push('--voice-a', params.voiceA, '--voice-b', params.voiceB);
+    if (params.mix !== undefined) args.push('--mix', String(params.mix));
+  }
 
   try {
     const { stdout } = await execFileAsync(PYTHON_BIN, args, {

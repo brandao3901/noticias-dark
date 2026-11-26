@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from voices import (  # noqa: E402
+    blend_named,
     load_kokoro,
     models_ready,
     read_config,
@@ -32,11 +33,20 @@ def synthesize(
     voice: str | None = None,
     speed: float | None = None,
     lang: str | None = None,
+    voice_a: str | None = None,
+    voice_b: str | None = None,
+    mix: float | None = None,
 ) -> dict:
     config = read_config()["voice"]
     kokoro = load_kokoro()
 
-    voice_arg, voice_label = resolve_voice(voice)
+    if voice_a and voice_b:
+        # Mistura informada na hora (prévia no estúdio) — não lê o .npy salvo.
+        weight = float(mix if mix is not None else config.get("mix", 0.7))
+        voice_arg = blend_named(voice_a, voice_b, weight)
+        voice_label = f"{voice_a}+{voice_b}@{round(weight, 2)}"
+    else:
+        voice_arg, voice_label = resolve_voice(voice)
     speed_value = float(speed if speed is not None else config.get("speed", 1.0))
     lang_value = (lang or config.get("lang", "pt-br")).strip() or "pt-br"
 
@@ -75,6 +85,9 @@ def main() -> int:
     parser.add_argument("--voice", default=None, help="nome da voz, 'blend' ou vazio")
     parser.add_argument("--speed", type=float, default=None, help="velocidade (0.5–2.0)")
     parser.add_argument("--lang", default=None, help="idioma (padrão pt-br)")
+    parser.add_argument("--voice-a", default=None, help="voz A da mistura (prévia)")
+    parser.add_argument("--voice-b", default=None, help="voz B da mistura (prévia)")
+    parser.add_argument("--mix", type=float, default=None, help="peso da voz A (0–1)")
     args = parser.parse_args()
 
     if not models_ready():
@@ -99,7 +112,16 @@ def main() -> int:
         return 2
 
     try:
-        result = synthesize(text, Path(args.out), args.voice, args.speed, args.lang)
+        result = synthesize(
+            text,
+            Path(args.out),
+            args.voice,
+            args.speed,
+            args.lang,
+            args.voice_a,
+            args.voice_b,
+            args.mix,
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:  # noqa: BLE001 - queremos a mensagem no JSON

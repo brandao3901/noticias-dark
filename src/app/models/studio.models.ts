@@ -175,6 +175,8 @@ export interface NarrationState {
   mode: 'tts' | 'clipchamp';
   /** Motor de voz: Gemini TTS (padrao) ou Edge neural (reserva). */
   engine?: 'kokoro' | 'gemini' | 'edge';
+  /** true (padrão) = usa a voz do canal; false = voz própria desta pauta. */
+  useChannelVoice?: boolean;
   voiceName: string;
   /** Preset de estilo do Gemini TTS (ancora, explicativo, urgente, leve, neutro). */
   style?: string;

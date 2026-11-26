@@ -41,6 +41,8 @@ export interface RenderNarrationOptions {
   rate?: number;
   /** Em falha/cota do Gemini, cai para o Edge em vez de deixar a cena muda. */
   fallbackToEdge?: boolean;
+  /** false = a pauta usa a própria voz em vez da voz do canal. */
+  useChannelVoice?: boolean;
   /**
    * Piso de duracao em segundos (ex.: 60 para monetizar). Se a fala ficaria
    * mais curta, a velocidade e reduzida (Edge) ou o tempo e distribuido (Gemini).

@@ -11,6 +11,7 @@ interface TtsVoiceView {
 
 interface TtsStatusView {
   defaultEngine: 'kokoro' | 'gemini' | 'edge';
+  channelVoice?: { engine: 'kokoro' | 'gemini' | 'edge'; voice: string };
   defaultStyle: string;
   voices: TtsVoiceView[];
   styles: Array<{ id: string; label: string }>;
@@ -117,6 +118,11 @@ export class NarrationVoicePicker {
 
   readonly engine = computed<'kokoro' | 'gemini' | 'edge'>(() => {
     const narration = this.pauta()?.narration;
+    // Padrão: a voz do canal manda (o render também segue ela).
+    if (narration?.useChannelVoice !== false) {
+      const channel = this.status()?.channelVoice;
+      if (channel?.engine) return channel.engine;
+    }
     if (narration?.engine === 'kokoro' || narration?.engine === 'edge' || narration?.engine === 'gemini') {
       return narration.engine;
     }
@@ -132,7 +138,16 @@ export class NarrationVoicePicker {
     return filtered.length ? filtered : all;
   });
 
-  readonly defaultVoiceId = computed(() => this.voicesForEngine()[0]?.id ?? 'Kore');
+  readonly defaultVoiceId = computed(() => {
+    const narration = this.pauta()?.narration;
+    if (narration?.useChannelVoice !== false) {
+      const channel = this.status()?.channelVoice;
+      if (channel?.voice && this.voicesForEngine().some((voice) => voice.id === channel.voice)) {
+        return channel.voice;
+      }
+    }
+    return this.voicesForEngine()[0]?.id ?? 'Kore';
+  });
   readonly defaultStyle = computed(() => this.status()?.defaultStyle ?? 'ancora');
   readonly styles = computed(() =>
     this.status()?.styles?.length
@@ -178,17 +193,38 @@ export class NarrationVoicePicker {
 
     const voice = this.status()?.voices.find((item) => item.engine === engine);
     const fallbackVoice = engine === 'edge' ? 'pt-BR-AntonioNeural' : engine === 'kokoro' ? 'blend' : 'Kore';
-    this.store.updateNarrationState(pauta.id, {
-      engine,
-      voiceName: voice?.id ?? fallbackVoice,
-    });
+    const voiceName = voice?.id ?? fallbackVoice;
+    this.store.updateNarrationState(pauta.id, { engine, voiceName, useChannelVoice: true });
+    void this.persistChannelVoice(engine, voiceName);
   }
 
   onVoice(event: Event): void {
     const pauta = this.pauta();
     if (!pauta) return;
     const voiceName = (event.target as HTMLSelectElement).value;
-    this.store.updateNarrationState(pauta.id, { voiceName });
+    this.store.updateNarrationState(pauta.id, { voiceName, useChannelVoice: true });
+    void this.persistChannelVoice(this.engine(), voiceName);
+  }
+
+  /** A escolha vira a voz de todas as pautas (sem configurar pauta por pauta). */
+  private async persistChannelVoice(
+    engine: 'kokoro' | 'gemini' | 'edge',
+    voice: string,
+  ): Promise<void> {
+    try {
+      const res = await fetch('/api/voice/default', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine, voice }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { default?: TtsStatusView['channelVoice'] };
+      if (data.default) {
+        this.status.update((current) => (current ? { ...current, channelVoice: data.default } : current));
+      }
+    } catch {
+      this.error.set('Não foi possível salvar a voz do canal (o app segue com a anterior).');
+    }
   }
 
   onStyle(event: Event): void {

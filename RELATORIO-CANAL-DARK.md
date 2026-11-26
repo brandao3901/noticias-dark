@@ -1177,6 +1177,45 @@ Pedido: voz própria, offline, sem CUDA/PyTorch, com mistura de vozes, e uma int
 - O console é uma **casca**: o render, os formatos e a publicação continuam no app Angular/Node.
 - Kokoro não tem controle de estilo (âncora/urgente); o `style` do Gemini é ignorado nesse motor.
 
+---
+
+## 24. Voz do canal global e estúdio dentro do app (implementado em 26/11/2026)
+
+Problema: a voz era escolhida **por pauta**, então cada vídeo novo exigia reconfigurar — e o estúdio de mistura só existia no Streamlit (uma segunda porta).
+
+### 24.1 Regra nova
+
+- `config.json.default = { "engine": "kokoro", "voice": "blend" }` é a **voz do canal**.
+- `parseRenderRequest`: se `narration.useChannelVoice !== false`, o servidor **descarta** `engine`/`voice` do payload e usa a voz do canal. Pautas antigas (Gemini/Charon) passam a sair com a voz do canal **sem serem editadas**.
+- `defaultTtsEngine()` e `resolveTtsVoice()` leem esse padrão primeiro; `.env` vira só fallback.
+- Exceção: `useChannelVoice: false` mantém a voz própria daquela pauta.
+
+### 24.2 Estúdio no app
+
+`src/app/components/kokoro-voice-studio.ts`, em **Mídia e Voz**:
+
+- Voz 1 / Voz 2, mistura (%) e velocidade (0,70–1,40);
+- frase de teste + **Ouvir prévia** (`POST /api/kokoro/preview`, mistura avulsa sem gravar);
+- **Salvar como voz do canal** (`POST /api/kokoro/voice`) → `.npy` + `config.json`, e já marca `default`.
+- O seletor de voz do app (`narration-voice-picker`) agora **mostra** a voz do canal e, ao trocar, grava o novo padrão (`PUT /api/voice/default`) — escolher é salvar.
+
+### 24.3 Rotas novas
+
+| Rota | Função |
+|---|---|
+| `GET/PUT /api/voice/default` | voz do canal (todas as pautas) |
+| `GET /api/kokoro/state` | vozes + mistura salva |
+| `POST /api/kokoro/preview` | WAV da mistura (sem salvar) |
+| `POST /api/kokoro/voice` | grava a mistura e a torna padrão |
+
+### 24.4 Prova
+
+- Pauta gravada com `gemini`/`Charon`, renderizada **sem** `useChannelVoice` → `engine: kokoro`, `voice: blend`.
+- Mesma pauta com `useChannelVoice: false` → `engine: edge`, `voice: pt-BR-AntonioNeural` (exceção respeitada).
+- `POST /api/kokoro/preview` → 200 `audio/wav`; misturas 20/80 e 80/20 geram arquivos de tamanhos diferentes (158 KB e 155 KB).
+- App e fluxo completo em **uma porta** (3000); Streamlit virou opcional.
+
+
 
 
 

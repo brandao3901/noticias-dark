@@ -41,6 +41,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "projects": "projects",
     },
     "api": {"node": "http://127.0.0.1:3000"},
+    # Voz do canal: vale para TODAS as pautas (o render segue isto).
+    "default": {"engine": "kokoro", "voice": "blend"},
 }
 
 _lock = Lock()
@@ -70,6 +72,21 @@ def write_config(config: dict[str, Any]) -> dict[str, Any]:
         json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return config
+
+
+def read_voice_default() -> dict[str, str]:
+    """Voz do canal: {engine, voice}. É o padrão de todos os vídeos."""
+    config = read_config().get("default") or {}
+    engine = str(config.get("engine") or "kokoro")
+    voice = str(config.get("voice") or "blend")
+    return {"engine": engine, "voice": voice}
+
+
+def write_voice_default(engine: str, voice: str) -> dict[str, str]:
+    config = read_config()
+    config["default"] = {"engine": engine, "voice": voice}
+    write_config(config)
+    return {"engine": engine, "voice": voice}
 
 
 def models_ready() -> bool:

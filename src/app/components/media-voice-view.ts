@@ -2,13 +2,14 @@ import { ChangeDetectionStrategy, Component, computed, inject, output, signal } 
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import type { MediaAsset, ScriptScene } from '../models/studio.models';
+import { KokoroVoiceStudio } from './kokoro-voice-studio';
 import { NarrationVoicePicker } from './narration-voice-picker';
 import { SpeechPreview } from '../services/speech-preview';
 import { StudioStore, getSceneMediaList } from '../services/studio-store';
 
 @Component({
   selector: 'app-media-voice-view',
-  imports: [ReactiveFormsModule, MatIconModule, NarrationVoicePicker],
+  imports: [ReactiveFormsModule, MatIconModule, KokoroVoiceStudio, NarrationVoicePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.activePauta(); as pauta) {
@@ -473,10 +474,15 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
           @if (pauta.narration.mode === 'tts') {
             <div class="mt-4 rounded-lg border border-white/10 bg-[#0a0d12] p-3.5">
               <app-narration-voice-picker />
+            </div>
+            <div class="mt-4">
               <p class="mt-2 text-[11px] text-slate-500">
                 Esta é a voz que vai para o MP4 renderizado no servidor. A prévia do navegador
                 (SpeechSynthesis) não é usada no arquivo final.
               </p>
+            </div>
+            <div class="mt-4">
+              <app-kokoro-voice-studio />
             </div>
             @if (speech.lastAudioError()) {
               <p class="mt-2 text-xs text-red-300">{{ speech.lastAudioError() }}</p>

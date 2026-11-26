@@ -7,19 +7,31 @@ Funciona local: nada de assinatura de vídeo, nada de nuvem. O estado de cada pa
 
 ---
 
-## Console local (Streamlit)
+## Voz do canal (Kokoro, offline)
 
-Além do app Angular, há um console rápido para gerar vídeo e mexer na voz:
+A voz é configurada **uma vez** e vale para **todas as pautas** — não existe configuração por pauta.
+
+No app (http://localhost:3000) → aba **Mídia e Voz** → *Voz do canal (Kokoro offline)*:
+
+- escolha **Voz 1** e **Voz 2**, a **mistura** (%) e a **velocidade**;
+- **Ouvir prévia** toca a mistura antes de salvar;
+- **Salvar como voz do canal** grava `voz_canal.npy` + `config.json`.
+
+O render segue `config.json.default` (`{"engine":"kokoro","voice":"blend"}`), então pautas antigas
+também passam a usar a voz nova sem serem editadas. Exceção consciente: uma pauta com
+`useChannelVoice: false` mantém a própria voz.
+
+Instalação (uma vez): `pip install -r requirements.txt` e `python python/download_models.py` (~354 MB).
+
+## Console opcional (Streamlit)
+
+`studio_app.py` continua no repositório como alternativa, mas **não é necessário**:
 
 ```bash
-pip install -r requirements.txt          # kokoro-onnx, soundfile, numpy, streamlit
-python python/download_models.py         # 354 MB, só na primeira vez
 python -m streamlit run studio_app.py --server.runOnSave true
 ```
 
-Abre em **http://localhost:8501** com três abas: **Gerar vídeo** (edita roteiro, renderiza, assiste),
-**Estúdio de voz** (mistura de vozes Kokoro com prévia e voz padrão) e **Histórico**.
-No Windows, duplo clique em `iniciar-console.cmd`. A voz padrão fica em `config.json` + `voz_canal.npy`.
+Abre em http://localhost:8501 (abas Gerar vídeo / Estúdio de voz / Histórico).
 
 ## Requisitos
 

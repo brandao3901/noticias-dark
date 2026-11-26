@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { normalizeTextForPtBrSpeech } from '../app/services/pt-br-speech';
 import { activeTtsModel, synthesizeSpeechWithGemini } from './gemini';
-import { kokoroModelsReady, readKokoroConfig, synthesizeKokoroWav } from './kokoro';
+import { kokoroModelsReady, readChannelVoiceSync, readKokoroConfig, synthesizeKokoroWav } from './kokoro';
 import { projectsRoot } from './projects';
 
 const execFileAsync = promisify(execFile);
@@ -72,6 +72,12 @@ export const NARRATION_STYLES = [
 export const DEFAULT_NARRATION_STYLE = 'ancora';
 
 export function defaultTtsEngine(): TtsEngine {
+  // A voz do canal (config.json) manda: é a escolha que vale para todas as pautas.
+  const channel = readChannelVoiceSync();
+  if (channel.engine === 'kokoro' && kokoroModelsReady()) return 'kokoro';
+  if (channel.engine === 'gemini' && process.env['GEMINI_API_KEY']?.trim()) return 'gemini';
+  if (channel.engine === 'edge') return 'edge';
+
   const configured = (process.env['TTS_ENGINE'] ?? '').trim().toLowerCase();
   if (configured === 'edge') return 'edge';
   if (configured === 'gemini') return 'gemini';
@@ -101,6 +107,15 @@ export function resolveTtsVoice(engine: TtsEngine, requested?: string): TtsVoice
     engine === 'kokoro' ? KOKORO_VOICES : engine === 'gemini' ? GEMINI_VOICES : EDGE_VOICES;
   const found = pool.find((voice) => voice.id === requested);
   if (found) return found;
+
+  // Sem escolha explícita: a voz do canal (vale para todas as pautas).
+  if (!requested) {
+    const channel = readChannelVoiceSync();
+    if (channel.engine === engine) {
+      const channelVoice = pool.find((voice) => voice.id === channel.voice);
+      if (channelVoice) return channelVoice;
+    }
+  }
 
   if (engine === 'kokoro') return KOKORO_VOICES[0];
   if (engine === 'gemini') {

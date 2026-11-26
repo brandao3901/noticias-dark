@@ -15,5 +15,9 @@
   },
   "api": {
     "node": "http://127.0.0.1:3000"
+  },
+  "default": {
+    "engine": "kokoro",
+    "voice": "blend"
   }
 }

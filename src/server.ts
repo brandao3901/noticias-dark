@@ -68,7 +68,14 @@ import {
   type PublishRequest,
 } from './server/publish-service';
 import { checkYoutubeQuota } from './server/publish-quota';
-import { kokoroModelsReady, readKokoroConfig } from './server/kokoro';
+import {
+  kokoroModelsReady,
+  previewChannelBlend,
+  readChannelVoiceSync,
+  readKokoroConfig,
+  saveChannelBlend,
+  writeChannelVoice,
+} from './server/kokoro';
 import { instagramStatus } from './server/instagram';
 import { tiktokStatus } from './server/tiktok';
 import {
@@ -145,6 +152,8 @@ app.get('/api/config/status', async (_req, res) => {
       ...geminiTtsStatus(),
       defaultEngine: defaultTtsEngine(),
       defaultStyle: DEFAULT_NARRATION_STYLE,
+      // Voz do canal: vale para todas as pautas.
+      channelVoice: readChannelVoiceSync(),
       voices: TTS_VOICES,
       styles: NARRATION_STYLES,
     },
@@ -152,6 +161,101 @@ app.get('/api/config/status', async (_req, res) => {
 });
 
 // Amostra de voz para a interface escolher antes de renderizar
+// ---------------------------------------------------------------------------
+// Voz do canal: uma escolha, válida para todas as pautas
+// ---------------------------------------------------------------------------
+
+app.get('/api/voice/default', (_req, res) => {
+  res.json({ default: readChannelVoiceSync() });
+});
+
+app.put('/api/voice/default', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const engine = body['engine'];
+  const voice = body['voice'];
+
+  if (engine !== 'kokoro' && engine !== 'gemini' && engine !== 'edge') {
+    res.status(400).json({ error: 'Motor de voz inválido.' });
+    return;
+  }
+  if (typeof voice !== 'string' || !voice.trim()) {
+    res.status(400).json({ error: 'Escolha uma voz.' });
+    return;
+  }
+
+  try {
+    const saved = await writeChannelVoice(engine, voice.trim());
+    res.json({ ok: true, default: saved });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Falha ao salvar a voz.' });
+  }
+});
+
+app.get('/api/kokoro/state', async (_req, res) => {
+  res.json({
+    modelsReady: kokoroModelsReady(),
+    voices: KOKORO_VOICES,
+    current: await readKokoroConfig(),
+    default: readChannelVoiceSync(),
+  });
+});
+
+app.post('/api/kokoro/preview', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const a = typeof body['a'] === 'string' ? body['a'] : undefined;
+  const b = typeof body['b'] === 'string' ? body['b'] : undefined;
+  const mix = Number(body['mix']);
+
+  if (!a || !b) {
+    res.status(400).json({ error: 'Escolha as duas vozes da mistura.' });
+    return;
+  }
+
+  try {
+    const wav = await previewChannelBlend({
+      a,
+      b,
+      mix: Number.isFinite(mix) ? Math.min(1, Math.max(0, mix)) : 0.7,
+      speed: Number(body['speed']) || 1,
+      text: typeof body['text'] === 'string' ? body['text'] : undefined,
+    });
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(wav);
+  } catch (err) {
+    res.status(409).json({
+      error: err instanceof Error ? err.message : 'Falha ao gerar a prévia da voz.',
+    });
+  }
+});
+
+app.post('/api/kokoro/voice', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const a = typeof body['a'] === 'string' ? body['a'] : undefined;
+  const b = typeof body['b'] === 'string' ? body['b'] : undefined;
+  const mix = Number(body['mix']);
+
+  if (!a || !b) {
+    res.status(400).json({ error: 'Escolha as duas vozes da mistura.' });
+    return;
+  }
+
+  try {
+    const saved = await saveChannelBlend({
+      a,
+      b,
+      mix: Number.isFinite(mix) ? Math.min(1, Math.max(0, mix)) : 0.7,
+      speed: Number(body['speed']) || 1,
+      lang: typeof body['lang'] === 'string' ? body['lang'] : undefined,
+    });
+    // Salvar a mistura já a torna a voz de todas as pautas.
+    const channel = await writeChannelVoice('kokoro', 'blend');
+    res.json({ ok: true, voice: saved.config, default: channel });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Falha ao salvar a voz.' });
+  }
+});
+
 app.post('/api/tts/preview', async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   try {
@@ -551,16 +655,22 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
     narrationBody && typeof narrationBody === 'object'
       ? {
           enabled: (narrationBody as Record<string, unknown>)['enabled'] === true,
+          // A voz do canal vale para todas as pautas; só uma pauta marcada com
+          // useChannelVoice: false mantém a própria escolha.
+          useChannelVoice: (narrationBody as Record<string, unknown>)['useChannelVoice'] !== false,
           engine: (() => {
+            if ((narrationBody as Record<string, unknown>)['useChannelVoice'] !== false) return undefined;
             const rawEngine = (narrationBody as Record<string, unknown>)['engine'];
             return rawEngine === 'kokoro' || rawEngine === 'gemini' || rawEngine === 'edge'
               ? (rawEngine as 'kokoro' | 'gemini' | 'edge')
               : undefined;
           })(),
           voice:
-            typeof (narrationBody as Record<string, unknown>)['voice'] === 'string'
-              ? String((narrationBody as Record<string, unknown>)['voice'])
-              : undefined,
+            (narrationBody as Record<string, unknown>)['useChannelVoice'] !== false
+              ? undefined
+              : typeof (narrationBody as Record<string, unknown>)['voice'] === 'string'
+                ? String((narrationBody as Record<string, unknown>)['voice'])
+                : undefined,
           style:
             typeof (narrationBody as Record<string, unknown>)['style'] === 'string'
               ? String((narrationBody as Record<string, unknown>)['style'])

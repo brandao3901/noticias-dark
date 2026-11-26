@@ -22,6 +22,7 @@ from voices import (  # noqa: E402
     read_config,
     save_blended,
     write_config,
+    write_voice_default,
 )
 
 PUBLIC_VOICES = ("pm_alex", "pf_dora", "pm_santa")
@@ -110,6 +111,8 @@ def save_default(
         "file": "voz_canal.npy",
     }
     write_config(config)
+    # Toda pauta passa a usar esta voz (o render segue o padrão do canal).
+    write_voice_default("kokoro", "blend")
 
     return {
         "ok": True,
@@ -119,15 +122,51 @@ def save_default(
     }
 
 
+def _cli() -> int:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Estúdio de voz do Canal Dark")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--save", action="store_true", help="grava a voz padrão do canal")
+    mode.add_argument("--preview", action="store_true", help="gera um WAV de prévia")
+    mode.add_argument("--selftest", action="store_true", help="teste rápido")
+    parser.add_argument("--a", default="pm_alex")
+    parser.add_argument("--b", default="pf_dora")
+    parser.add_argument("--mix", type=float, default=0.7)
+    parser.add_argument("--speed", type=float, default=1.0)
+    parser.add_argument("--lang", default="pt-br")
+    parser.add_argument("--text", default=None)
+    parser.add_argument("--out", default="build/preview.wav")
+    args = parser.parse_args()
+
+    try:
+        if args.save:
+            print(json.dumps(save_default(args.a, args.b, args.mix, args.speed, args.lang), ensure_ascii=False))
+            return 0
+        if args.preview:
+            text = args.text or "Esta é a voz do canal com a mistura escolhida no estúdio."
+            data, meta = preview(text, args.a, args.b, args.mix, args.speed, args.lang)
+            out = Path(args.out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(data)
+            print(json.dumps({"ok": True, "out": str(out), **meta}, ensure_ascii=False))
+            return 0
+        data, meta = preview(
+            "Esta é a voz do canal, mistura de setenta por cento da voz um com trinta por cento da voz dois.",
+            "pm_alex",
+            "pf_dora",
+            0.7,
+        )
+        out = Path(__file__).resolve().parent.parent / "build" / "preview.wav"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        print(json.dumps({"ok": True, "out": str(out), **meta}, ensure_ascii=False))
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"ok": False, "error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False))
+        return 1
+
+
 if __name__ == "__main__":
-    # Teste rápido pelo terminal.
-    data, meta = preview(
-        "Esta é a voz do canal, mistura de setenta por cento da voz um com trinta por cento da voz dois.",
-        "pm_alex",
-        "pf_dora",
-        0.7,
-    )
-    out = Path(__file__).resolve().parent.parent / "build" / "preview.wav"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
-    print({"meta": meta, "out": str(out)})
+    raise SystemExit(_cli())
