@@ -1,5 +1,5 @@
 import { isPlatformBrowser } from '@angular/common';
-import { Injectable, PLATFORM_ID, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, PLATFORM_ID, computed, inject, signal } from '@angular/core';
 
 export interface RenderJobResultView {
   seconds: number;
@@ -66,11 +66,23 @@ export class RenderQueue {
   private source: EventSource | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
+  private readonly destroyRef = inject(DestroyRef);
+
   constructor() {
-    if (this.isBrowser) this.connect();
+    if (this.isBrowser) {
+      this.connect();
+      // Sem isso, cada recarga do HMR dejá uma conexão SSE aberta acumulando
+      // jobs na memória do navegador (causa de "Out of Memory" em sessão longa).
+      this.destroyRef.onDestroy(() => {
+        this.stopPolling();
+        this.source?.close();
+        this.source = null;
+      });
+    }
   }
 
   private connect(): void {
+    if (this.source) return;
     if (typeof EventSource === 'undefined') {
       this.startPolling();
       return;

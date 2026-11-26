@@ -49,6 +49,8 @@ import { NarrationVoicePicker } from './narration-voice-picker';
                     [src]="asset.thumbUrl"
                     [alt]="asset.title"
                     referrerpolicy="no-referrer"
+                    decoding="async"
+                    loading="lazy"
                     class="absolute inset-0 h-full w-full object-cover"
                   />
                 }
