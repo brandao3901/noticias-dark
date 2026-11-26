@@ -260,6 +260,133 @@ export function silencePcm(seconds: number, sampleRate = NARRATION_SAMPLE_RATE):
   return Buffer.alloc(bytes);
 }
 
+/** Respiro entre cenas: o suficiente para não colar a fala, sem dead air. */
+export const NARRATION_BREATH_SEC = Math.max(
+  0.05,
+  Math.min(0.5, Number(process.env['NARRATION_BREATH_SEC']) || 0.15),
+);
+
+/** Nenhuma cena fica menor que isso, mesmo com fala de 2 palavras. */
+const MIN_SCENE_SEC = 1.2;
+
+/** Pausa máxima aceitável dentro de um clipe (ponto final do TTS). */
+export const NARRATION_MAX_PAUSE_SEC = Math.max(
+  0.15,
+  Math.min(1, Number(process.env['NARRATION_MAX_PAUSE_SEC']) || 0.3),
+);
+
+/**
+ * Comprime pausas internas longas (o TTS respira ~0,9 s no ponto final).
+ *
+ * Uma pausa de quase 1 s no meio da narração é o que faz o espectador rolar o
+ * feed. Aqui qualquer silêncio interno maior que `maxPauseSec` é encurtado.
+ */
+export function compressInternalSilence(
+  pcm: Buffer,
+  sampleRate = NARRATION_SAMPLE_RATE,
+  maxPauseSec = NARRATION_MAX_PAUSE_SEC,
+): Buffer {
+  if (process.env['NARRATION_COMPRESS_PAUSES'] === '0') return pcm;
+
+  const threshold = 0.008;
+  const windowSize = Math.max(1, Math.round(sampleRate * 0.01));
+  const maxSilenceSamples = Math.round(maxPauseSec * sampleRate);
+  const totalSamples = Math.floor(pcm.length / 2);
+  if (totalSamples < windowSize * 8) return pcm;
+
+  const rmsAt = (startSample: number): number => {
+    const end = Math.min(totalSamples, startSample + windowSize);
+    let sum = 0;
+    for (let i = startSample; i < end; i += 1) {
+      const value = pcm.readInt16LE(i * 2) / 32768;
+      sum += value * value;
+    }
+    return Math.sqrt(sum / Math.max(1, end - startSample));
+  };
+
+  const chunks: Buffer[] = [];
+  let cursor = 0;
+  let silentStart = -1;
+
+  for (let start = 0; start + windowSize <= totalSamples; start += windowSize) {
+    const isSilent = rmsAt(start) < threshold;
+    if (isSilent && silentStart < 0) {
+      silentStart = start;
+    } else if (!isSilent && silentStart >= 0) {
+      const runSamples = start - silentStart;
+      // Fala antes do silêncio.
+      if (silentStart > cursor) {
+        chunks.push(pcm.subarray(cursor * 2, silentStart * 2));
+      }
+      // Silêncio: encurta só o que passar do máximo.
+      const keep = Math.min(runSamples, maxSilenceSamples);
+      chunks.push(Buffer.alloc(keep * 2));
+      cursor = start;
+      silentStart = -1;
+    }
+  }
+
+  if (cursor < totalSamples) chunks.push(pcm.subarray(cursor * 2));
+  const result = Buffer.concat(chunks);
+  // Compressão agressiva demais indica detecção errada: mantém o original.
+  return result.length > pcm.length * 0.25 ? result : pcm;
+}
+
+/**
+ * Apara silêncio no começo e no fim de um clipe de fala.
+ *
+ * O TTS devolve ~1 s de silêncio em cada ponta; sem aparar, essa sobra vira
+ * pausa entre parágrafos — foi a maior causa do "pula vídeo".
+ */
+export function trimSilence(
+  pcm: Buffer,
+  sampleRate = NARRATION_SAMPLE_RATE,
+  options: { threshold?: number; marginSec?: number } = {},
+): Buffer {
+  if (process.env['NARRATION_TRIM'] === '0') return pcm;
+
+  const threshold = options.threshold ?? 0.008;
+  const margin = Math.round(sampleRate * (options.marginSec ?? 0.06));
+  const windowSize = Math.max(1, Math.round(sampleRate * 0.01));
+  const totalSamples = Math.floor(pcm.length / 2);
+  if (totalSamples < windowSize * 4) return pcm;
+
+  const rmsAt = (startSample: number): number => {
+    const end = Math.min(totalSamples, startSample + windowSize);
+    let sum = 0;
+    for (let i = startSample; i < end; i += 1) {
+      const value = pcm.readInt16LE(i * 2) / 32768;
+      sum += value * value;
+    }
+    return Math.sqrt(sum / Math.max(1, end - startSample));
+  };
+
+  let firstLoud = -1;
+  for (let start = 0; start + windowSize <= totalSamples; start += windowSize) {
+    if (rmsAt(start) >= threshold) {
+      firstLoud = start;
+      break;
+    }
+  }
+
+  let lastLoud = -1;
+  for (let start = totalSamples - windowSize; start >= 0; start -= windowSize) {
+    if (rmsAt(start) >= threshold) {
+      lastLoud = start + windowSize;
+      break;
+    }
+  }
+
+  // Clipe inteiro "silencioso" ou deteccao suspeita: nao mexe.
+  if (firstLoud < 0 || lastLoud <= firstLoud) return pcm;
+
+  const startSample = Math.max(0, firstLoud - margin);
+  const endSample = Math.min(totalSamples, lastLoud + margin);
+  if (endSample - startSample < windowSize * 4) return pcm;
+
+  return pcm.subarray(startSample * 2, endSample * 2);
+}
+
 /** WAV PCM 16 bits mono a partir de PCM cru. */
 export async function writeWav(pcm: Buffer, path: string, sampleRate = NARRATION_SAMPLE_RATE): Promise<void> {
   const header = Buffer.alloc(44);
@@ -503,7 +630,11 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
 
       try {
         speechPcm = await synthesizeScenePcm(index, scene.narration ?? '', rateValue);
-        if (speechPcm) producedAny = true;
+        if (speechPcm) {
+          // Tira o silêncio que o TTS põe nas pontas: ele é o grosso da pausa.
+          speechPcm = compressInternalSilence(trimSilence(speechPcm));
+          producedAny = true;
+        }
       } catch {
         failedScenes++;
         speechPcm = null;
@@ -512,8 +643,12 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
       const speechDuration = speechPcm ? speechPcm.length / 2 / NARRATION_SAMPLE_RATE : 0;
       speechSeconds += speechDuration;
 
-      // 0,25 s de respiro para a fala nao colar na proxima cena.
-      const effective = speechDuration > 0 ? Math.max(planned, speechDuration + 0.25) : planned;
+      // A cena encolhe para a fala: `planned` é alvo editorial, não piso. Sem
+      // isso, uma cena de 8 s de fala ficava com 10 s de vídeo (2 s de morto).
+      const effective =
+        speechDuration > 0
+          ? Math.max(MIN_SCENE_SEC, speechDuration + NARRATION_BREATH_SEC)
+          : planned;
       sceneDurations.push(Number(effective.toFixed(3)));
 
       const targetBytes = Math.round(effective * NARRATION_SAMPLE_RATE) * 2;
@@ -566,12 +701,28 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
   let plannedTotal = pass.sceneDurations.reduce((acc, value) => acc + value, 0);
   if (target > 0 && plannedTotal < target) {
     const gap = target - plannedTotal;
-    const perScene = gap / pass.sceneDurations.length;
-    const pad = silencePcm(perScene);
-    pass.sceneChunks = pass.sceneChunks.map((chunk) => Buffer.concat([chunk, pad]));
-    pass.sceneDurations = pass.sceneDurations.map((value) =>
-      Number((value + perScene).toFixed(3)),
-    );
+    const sceneCount = Math.max(1, pass.sceneDurations.length);
+
+    // 1) Micro-pausas: no máximo 0,35 s por cena — imperceptível, não "pula vídeo".
+    const microTotal = Math.min(gap, 0.35 * sceneCount);
+    const perScene = microTotal / sceneCount;
+    if (perScene > 0.01) {
+      const pad = silencePcm(perScene);
+      pass.sceneChunks = pass.sceneChunks.map((chunk) => Buffer.concat([chunk, pad]));
+      pass.sceneDurations = pass.sceneDurations.map((value) =>
+        Number((value + perScene).toFixed(3)),
+      );
+    }
+
+    // 2) O que sobra vai no FIM (o card de fechamento cobre na tela), nunca
+    //    como silêncio no meio da narrativa.
+    const tail = gap - microTotal;
+    if (tail > 0.01) {
+      const last = pass.sceneDurations.length - 1;
+      pass.sceneChunks[last] = Buffer.concat([pass.sceneChunks[last], silencePcm(tail)]);
+      pass.sceneDurations[last] = Number((pass.sceneDurations[last] + tail).toFixed(3));
+    }
+
     plannedTotal += gap;
   }
 

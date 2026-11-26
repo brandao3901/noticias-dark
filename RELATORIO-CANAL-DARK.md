@@ -978,6 +978,70 @@ O envio real ao YouTube depende das credenciais acima — não há conta conecta
 
 ---
 
+## 20. Ritmo, gancho e dinâmica visual (implementado em 26/11/2026)
+
+Motivo: os dois primeiros Shorts ficaram com **25–28 s de visualização média** (37–45%) e **47–50% de "stayed to watch"**. Diagnóstico medido no MP4 publicado: **6 pausas de 1,30 s** (5 entre cenas + 1 no fim) — **7,7 s de silêncio em 69,7 s (11%)**.
+
+### 20.1 Causas encontradas
+
+| Causa | Onde |
+|---|---|
+| Respiro fixo de 0,25 s por cena | `narration.ts` |
+| ~1 s de silêncio que o TTS devolve nas pontas e não era aparado | idem |
+| ~0,9 s de pausa **interna** no ponto final de cada frase (o TTS respira) | idem — só descoberto na medição |
+| Cena nunca encolhia: `max(planned, fala + 0,25)` segurava 10 s com 8 s de fala | idem |
+| Piso de 62 s distribuído como silêncio em todas as cenas | idem |
+| Visual: 1 imagem por cena, Ken Burns só com zoom central, "transição" = fade de preto 0,18 s | `export-video.ts` |
+
+### 20.2 O que mudou
+
+**Áudio**
+- `trimSilence()` apara as pontas (RMS 10 ms, margem 60 ms).
+- `compressInternalSilence()` encurta pausas internas para **0,30 s** (`NARRATION_MAX_PAUSE_SEC`).
+- Respiro entre cenas: **0,15 s** (`NARRATION_BREATH_SEC`).
+- A cena encolhe para a fala (`max(1,2 s, fala + respiro)`).
+- Sobra de piso: micro-pausas de até 0,35 s + resto no fim (o card de fechamento cobre).
+
+**Roteiro**
+- Novo modo **`rapido`** (padrão): 4 cenas, 100–125 palavras, **38–48 s**. `short` e `expanded` (piso 62 s) continuam.
+- Gancho obrigatório ≤ 14 palavras, começando a primeira cena.
+- `closing` vira **pergunta ao público**.
+
+**Visual**
+- Shots de ~2,8 s por cena (até 4), com **recortes virtuais** da mesma foto quando falta mídia.
+- 6 variantes de câmera (zoom in/out, pan L→R, R→L, duas diagonais).
+- Transições: corte seco, **zoom-punch** e **flash branco** (sem fade de preto).
+- **Legenda karaokê** (ASS, palavra a palavra em âmbar) — SRT/VTT continuam no pacote.
+- **Card de gancho** nos primeiros 2 s com a manchete.
+- **Card de fechamento** com a pergunta + "COMENTE AQUI EMBAIXO".
+- Barra de progresso âmbar e vinheta leve.
+
+**Contrato**
+- `render.json` grava `dynamics`, `cuts`, `avgShotSec`, `firstCutSec`.
+- QC novo **`qc-pacing`**: palavras vs. alvo do modo e presença de pergunta no fechamento.
+- Estúdio e QC: toggles de **dinâmica alta** e **legenda karaokê**.
+
+### 20.3 Medições depois (render de validação, 4 cenas)
+
+| Métrica | Antes | Depois |
+|---|---|---|
+| Maior pausa | 1,30 s | **0,31 s** |
+| Total de silêncio | 7,7 s / 69,7 s | **~1,8 s / 26,1 s** (a cada 0,3 s é o limite configurado) |
+| Cortes | 6 (1 por cena) | **11** |
+| Shot médio | ~11,6 s | **2,38 s** |
+| Primeiro corte | ~11 s | **1,49 s** |
+| Duração | 69,7 s | 26,1 s (roteiro de teste) |
+
+### 20.4 Limitações e riscos observados
+
+- **Cota do Gemini TTS**: durante os testes a API entrou em 429 e o render caiu para o Edge no meio do vídeo (`tts: "mixed"`). O fallback funcionou; a próxima renderização volta ao Gemini quando a pausa expira.
+- **Tempo de render**: ~26 s para 4 cenas/11 shots (antes ~28 s para 6 cenas/6 shots). Shots a mais não encareceram na proporção esperada.
+- **Card vs. legenda**: o card de fechamento teve de ir para o topo (10%) porque a legenda ocupa a faixa inferior; o CTA passou a ser a última linha do mesmo texto para não sobrepor.
+- `drawbox` não aceita `t` na largura: a barra de progresso é desenhada em passos com `enable`.
+
+
+---
+
 ## 19. Voz: Gemini TTS no lugar da voz genérica (implementado em 26/11/2026)
 
 ### 19.1 O que mudou

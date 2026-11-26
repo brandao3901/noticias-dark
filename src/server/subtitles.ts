@@ -104,3 +104,146 @@ export function srtToVtt(srt: string): string {
 
   return `WEBVTT\n\n${cues.join('\n\n')}\n`;
 }
+
+// ---------------------------------------------------------------------------
+// Legenda karaoke (ASS) — palavra a palavra, para reter atenção
+// ---------------------------------------------------------------------------
+
+export interface KaraokeOptions {
+  fontSize?: number;
+  marginV?: number;
+  /** Quantas palavras cabem por bloco (2–4). */
+  maxWordsPerChunk?: number;
+  /** Cor de destaque da palavra atual, em &HAABBGGRR. */
+  highlightColor?: string;
+  baseColor?: string;
+}
+
+interface SrtCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function parseSrtCues(content: string): SrtCue[] {
+  const normalized = content.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+
+  const cues: SrtCue[] = [];
+  for (const block of normalized.split(/\n{2,}/)) {
+    const lines = block.split('\n').filter((line) => line.trim().length > 0);
+    if (lines.length < 2) continue;
+
+    const timeLine = lines.find((line) => line.includes('-->'));
+    if (!timeLine) continue;
+
+    const [rawStart, rawEnd] = timeLine.split('-->');
+    const start = parseTime(rawStart ?? '');
+    const end = parseTime(rawEnd ?? '');
+    if (start === null || end === null || end <= start) continue;
+
+    const text = lines
+      .slice(lines.indexOf(timeLine) + 1)
+      .join(' ')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    if (!text) continue;
+
+    cues.push({ start, end, text });
+  }
+  return cues;
+}
+
+function assTime(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  const h = Math.floor(clamped / 3600);
+  const m = Math.floor((clamped % 3600) / 60);
+  const s = Math.floor(clamped % 60);
+  const cs = Math.round((clamped - Math.floor(clamped)) * 100);
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  return `${h}:${pad(m)}:${pad(s)}.${pad(cs)}`;
+}
+
+function escapeAssText(value: string): string {
+  return value.replace(/[{}]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Converte o SRT em ASS com destaque palavra a palavra.
+ *
+ * O tempo de cada palavra é proporcional ao seu tamanho dentro do cue — não há
+ * timestamp de palavra no TTS, e a proporção erra pouco para narração corrida.
+ * O vídeo queima este ASS; o SRT/VTT continuam no pacote e no YouTube.
+ */
+export function buildKaraokeAss(content: string, options: KaraokeOptions = {}): string {
+  const fontSize = options.fontSize ?? 58;
+  const marginV = options.marginV ?? 250;
+  const maxWords = Math.max(1, Math.min(4, options.maxWordsPerChunk ?? 3));
+  const highlight = options.highlightColor ?? '&H00389AE5'; // âmbar do canal
+  const base = options.baseColor ?? '&H00FFFFFF';
+
+  const header = [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    'PlayResX: 1080',
+    'PlayResY: 1920',
+    'WrapStyle: 0',
+    'ScaledBorderAndShadow: yes',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Kara,Arial,${fontSize},${base},${highlight},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,2,40,40,${marginV},1`,
+    '',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+  ].join('\n');
+
+  const events: string[] = [];
+
+  for (const cue of parseSrtCues(content)) {
+    const words = cue.text.split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+
+    const weights = words.map((word) => word.length + 1);
+    const totalWeight = weights.reduce((acc, value) => acc + value, 0) || 1;
+    const duration = cue.end - cue.start;
+
+    // Divide em blocos de 2–4 palavras (quebra também em pontuação forte).
+    const chunks: Array<{ from: number; to: number }> = [];
+    let from = 0;
+    for (let i = 0; i < words.length; i++) {
+      const isLast = i === words.length - 1;
+      const endsSentence = /[.!?…]$/.test(words[i]);
+      if (isLast || i - from + 1 >= maxWords || (endsSentence && i - from + 1 >= 2)) {
+        chunks.push({ from, to: i });
+        from = i + 1;
+      }
+    }
+    if (from < words.length) chunks.push({ from, to: words.length - 1 });
+
+    let cursor = cue.start;
+    for (const chunk of chunks) {
+      const chunkWords = words.slice(chunk.from, chunk.to + 1);
+      const chunkWeight = weights.slice(chunk.from, chunk.to + 1).reduce((a, b) => a + b, 0);
+      const chunkDuration = (chunkWeight / totalWeight) * duration;
+
+      let wordCursor = cursor;
+      for (let w = 0; w < chunkWords.length; w++) {
+        const wordDuration = (weights[chunk.from + w] / chunkWeight) * chunkDuration;
+        const line = chunkWords
+          .map((word, index) =>
+            index === w ? `{\\c${highlight}}${escapeAssText(word)}{\\c${base}}` : escapeAssText(word),
+          )
+          .join(' ');
+
+        events.push(
+          `Dialogue: 0,${assTime(wordCursor)},${assTime(wordCursor + wordDuration)},Kara,,0,0,0,,${line}`,
+        );
+        wordCursor += wordDuration;
+      }
+      cursor += chunkDuration;
+    }
+  }
+
+  return `${header}\n${events.join('\n')}\n`;
+}

@@ -84,7 +84,7 @@ Porta diferente: `PORT=4000 npm start`. O servidor escuta em `0.0.0.0`.
 
 1. **Descoberta** → cole um link de notícia ou escolha uma manchete; o app extrai fontes, fotos e apuração.
 2. **Dossiê** → confira fontes (RSS, GDELT, Wikimedia) e o contexto.
-3. **Roteiro** → gere com Gemini e edite cenas, durações e legendas.
+3. **Roteiro** → escolha a duração (**Rápido ~42 s** é o padrão, melhor retenção; *Monetizável* força 60–75 s), gere com Gemini e edite cenas.
 4. **Mídia e Voz** → escolha a voz (**Gemini TTS** · Kore/Charon/Puck/Aoede), o estilo e clique **Ouvir amostra**.
 5. **Estúdio e QC** → resolva os itens de QC, **Aprove** a pauta e clique em **Baixar vídeo 9:16 (.MP4)**.
 6. **Publicar no YouTube** → conecte a conta, revise título/descrição/tags, escolha a privacidade e publique.

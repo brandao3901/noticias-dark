@@ -33,8 +33,19 @@ import { StudioStore, extractOrderedEntityNames } from '../services/studio-store
           </div>
 
           <div class="mt-4 flex flex-wrap items-center justify-between gap-4">
-            <!-- Seletor de versão curta / expandida (Seção 17 e 18) -->
+            <!-- Seletor de versão: rápido (retém), curto ou expandido -->
             <div class="flex items-center gap-1 rounded-lg bg-[#0a0d12] p-1 border border-white/10">
+              <button
+                type="button"
+                (click)="selectedMode.set('rapido')"
+                class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
+                [class.bg-[#e59a38]]="selectedMode() === 'rapido'"
+                [class.text-[#0a0d12]]="selectedMode() === 'rapido'"
+                [class.text-slate-300]="selectedMode() !== 'rapido'"
+                title="4 cenas, 100–125 palavras, ~40 s: melhor retenção"
+              >
+                Rápido (38–48 s)
+              </button>
               <button
                 type="button"
                 (click)="selectedMode.set('short')"
@@ -335,7 +346,7 @@ import { StudioStore, extractOrderedEntityNames } from '../services/studio-store
 export class ScriptView {
   readonly store = inject(StudioStore);
   readonly goToMedia = output<void>();
-  readonly selectedMode = signal<ScriptVersionMode>('short');
+  readonly selectedMode = signal<ScriptVersionMode>('rapido');
 
   readonly totalWords = computed(() => {
     const scenes = this.store.activePauta()?.script?.scenes ?? [];

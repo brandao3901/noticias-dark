@@ -9,7 +9,7 @@ import { buildAvatarOverlay, JAW_LEVELS } from './avatar-overlay';
 import { buildJawEnvelope, buildNarrationTrack } from './narration';
 import { WEB_USER_AGENT } from './http';
 import { validateSafePublicUrl } from './ssrf-guard';
-import { retimeSubtitles } from './subtitles';
+import { retimeSubtitles, buildKaraokeAss } from './subtitles';
 
 const execFileAsync = promisify(execFile);
 
@@ -54,6 +54,11 @@ export interface RenderResult {
   ttsEngine?: string;
   ttsVoice?: string;
   ttsModel?: string;
+  /** Auditoria de ritmo visual (vai para o render.json). */
+  dynamics?: string;
+  cuts?: number;
+  avgShotSec?: number;
+  firstCutSec?: number;
 }
 
 const MAX_REMOTE_MEDIA_BYTES = 25 * 1024 * 1024;
@@ -98,21 +103,64 @@ function resolveLabelFontPath(): string | null {
 }
 
 /**
- * Zoom lento (Ken Burns) sobre imagens paradas.
+ * Zoom lento (Ken Burns) sobre imagens paradas, com variantes de câmera.
  *
- * Sem isso uma foto fica congelada por vários segundos e o Short parece
- * travado — o que pesa ainda mais nas cenas sem mídia, que usam o cenário do
- * estúdio. Alterna aproximação e afastamento para duas cenas seguidas não
- * repetirem o mesmo movimento.
+ * Uma foto congelada por 10 s parece vídeo travado. Aqui cada shot recebe um
+ * movimento diferente (aproximação, afastamento, pan lateral, diagonal) para
+ * dois cortes seguidos nunca repetirem a mesma câmera.
  */
-function buildKenBurnsFilter(segmentIndex: number, durationSec: number): string {
+function buildKenBurnsFilter(
+  segmentIndex: number,
+  durationSec: number,
+  options: { punch?: boolean } = {},
+): string {
   const fps = 30;
   const frames = Math.max(2, Math.round(durationSec * fps));
-  // 10% de variação de zoom ao longo da cena.
-  const step = (0.1 / frames).toFixed(6);
-  const zoom = segmentIndex % 2 === 0 ? `min(1+${step}*on,1.10)` : `max(1.10-${step}*on,1.0)`;
+  const variant = segmentIndex % 6;
+  const dz = 0.10 / frames; // 10% de zoom ao longo do shot
 
-  return `,zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+  // `punch`: 4 quadros (≈0,13 s) começando em 1,08 e caindo para o zoom normal.
+  const punch = options.punch ? 'if(lt(on,4),1.08-0.02*on,1.0)' : null;
+
+  const zoomIn = punch ? `${punch}+${dz.toFixed(6)}*(on-4)` : `1+${dz.toFixed(6)}*on`;
+  const zoomOut = punch ? `${punch}+${(1.10 + dz * frames).toFixed(6)}-${dz.toFixed(6)}*on` : `1.10-${dz.toFixed(6)}*on`;
+
+  const panX = (from: number, to: number): string =>
+    `if(eq(zoom,1),0,${from}*iw/zoom+(${to}-${from})*iw/zoom*on/${frames})`;
+  const panY = (from: number, to: number): string =>
+    `if(eq(zoom,1),0,${from}*ih/zoom+(${to}-${from})*ih/zoom*on/${frames})`;
+
+  switch (variant) {
+    case 1:
+      // afastamento
+      return `,zoompan=z='${zoomOut}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+    case 2:
+      // pan esquerda -> direita
+      return `,zoompan=z='${punch ?? '1.08'}':x='${panX(0, 0.10)}':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+    case 3:
+      // pan direita -> esquerda
+      return `,zoompan=z='${punch ?? '1.08'}':x='${panX(0.10, 0)}':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+    case 4:
+      // diagonal (baixo-direita -> cima-esquerda)
+      return `,zoompan=z='${zoomIn}':x='${panX(0.02, 0.06)}':y='${panY(0.02, 0.06)}':d=1:s=1080x1920:fps=${fps}`;
+    case 5:
+      // diagonal oposta
+      return `,zoompan=z='${zoomIn}':x='${panX(0.06, 0.02)}':y='${panY(0.06, 0.02)}':d=1:s=1080x1920:fps=${fps}`;
+    default:
+      // aproximação central
+      return `,zoompan=z='${zoomIn}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+  }
+}
+
+/** Transição de entrada do shot (assada no segmento, sem grafo extra). */
+function buildTransitionFilter(type: 'cut' | 'punch' | 'flash'): string {
+  if (type === 'flash') return 'fade=t=in:st=0:d=0.07:color=white,';
+  return '';
+}
+
+/** Recorte "virtual" quando falta mídia: wide, médio ou detalhe. */
+function cropZoomForVariant(variant: number): number {
+  return variant % 3 === 0 ? 1 : variant % 3 === 1 ? 1.28 : 1.6;
 }
 
 function buildSegmentFilter(motionFilter: string): string {
@@ -125,14 +173,23 @@ function buildSegmentFilter(motionFilter: string): string {
  * Recortar 9:16 direto em foto vertical/4:3 corta rosto e contexto (a foto da
  * matéria costuma ser retrato). O fundo desfocado preserva a imagem completa,
  * que é o padrão de telejornal.
+ *
+ * `cropZoom` > 1 aproxima a imagem da frente — é o que cria um "segundo shot"
+ * a partir da mesma foto, sem baixar mídia nova.
  */
-function buildStillFilterComplex(motionFilter: string, fadeIn: boolean): string {
-  const fade = fadeIn ? ',fade=t=in:st=0:d=0.18' : '';
+function buildStillFilterComplex(
+  motionFilter: string,
+  transition: 'cut' | 'punch' | 'flash',
+  cropZoom = 1,
+): string {
+  const flash = transition === 'flash' ? ',fade=t=in:st=0:d=0.07:color=white' : '';
   return [
     '[0:v]split=2[bgs][fgs]',
     '[bgs]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,gblur=sigma=42,eq=brightness=-0.06[bgb]',
-    '[fgs]scale=1620:-1[fgn]',
-    `[bgb][fgn]overlay=(W-w)/2:(H-h)/2:shortest=1${fade}${motionFilter},fps=30,format=yuv420p[vout]`,
+    cropZoom > 1.01
+      ? `[fgs]scale=${Math.round(1620 * cropZoom)}:-1,crop=1620:2880:(iw-1620)/2:(ih-2880)/2[fgn]`
+      : '[fgs]scale=1620:-1[fgn]',
+    `[bgb][fgn]overlay=(W-w)/2:(H-h)/2:shortest=1${motionFilter},fps=30,format=yuv420p${flash}[vout]`,
   ].join(';');
 }
 
@@ -156,25 +213,100 @@ function escapeDrawText(value: string): string {
     .replace(/,/g, '\\,');
 }
 
+/** Quebra o texto em linhas curtas para o drawtext (que não faz wrap). */
+function wrapForCard(text: string, maxChars = 24): string {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    if (!current) {
+      current = word;
+    } else if (`${current} ${word}`.length <= maxChars) {
+      current += ` ${word}`;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.join('\n');
+}
+
 /**
  * A fonte entra por caminho relativo a pasta de trabalho (workDir): o "C:" de um
  * caminho absoluto e interpretado como separador de opcoes pelo parser de filtros.
  */
-function buildVideoFilter(includeLabel: boolean): string {
+function buildVideoFilter(params: {
+  includeLabel: boolean;
+  subtitleFile: string;
+  totalDuration: number;
+}): string {
   const filters: string[] = [];
 
-  if (includeLabel) {
+  if (params.includeLabel) {
     filters.push(
       `drawtext=fontfile=${LABEL_FONT_FILE}:text='${escapeDrawText(channelLabel())}':x=36:y=48:fontsize=22:fontcolor=white@0.85:box=1:boxcolor=black@0.5:boxborderw=6`,
     );
   }
 
-  filters.push(
-    // libass dimensiona o SRT sobre PlayResY=288: FontSize 12 e MarginV 48
-    // resultam em ~80px e ~320px de margem no video 1080x1920, acima da barra
-    // de interface do YouTube Shorts.
-    "subtitles=legendas.srt:force_style='Alignment=2,MarginV=48,FontSize=12,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'",
-  );
+  // Vinheta leve dá profundidade à imagem sem custo perceptível.
+  filters.push('vignette=angle=PI/6');
+
+  // Barra de progresso: o drawbox não aceita `t` na largura, então a barra é
+  // desenhada em passos com `enable` (1 s cada, no máximo 60).
+  const steps = Math.min(60, Math.max(10, Math.round(params.totalDuration)));
+  const stepSec = Math.max(0.2, params.totalDuration / steps);
+  for (let index = 0; index < steps; index += 1) {
+    const width = Math.max(4, Math.round((1080 * (index + 1)) / steps));
+    const from = (index * stepSec).toFixed(3);
+    const to = ((index + 1) * stepSec).toFixed(3);
+    filters.push(
+      `drawbox=x=0:y=ih-12:w=${width}:h=12:color=0xe59a38@0.95:t=fill:enable='between(t,${from},${to})'`,
+    );
+  }
+
+  if (params.subtitleFile.endsWith('.ass')) {
+    filters.push('subtitles=legendas.ass');
+  } else {
+    filters.push(
+      // libass dimensiona o SRT sobre PlayResY=288: FontSize 12 e MarginV 48
+      // resultam em ~80px e ~320px de margem no video 1080x1920, acima da barra
+      // de interface do YouTube Shorts.
+      "subtitles=legendas.srt:force_style='Alignment=2,MarginV=48,FontSize=12,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'",
+    );
+  }
+
+  return filters.join(',');
+}
+
+/**
+ * Cards de gancho (primeiros 2 s) e de fechamento (pergunta ao público).
+ * Usam `textfile` para aceitar acentos e quebras de linha sem escapar nada.
+ */
+function buildCardFilters(params: {
+  labelFontPresent: boolean;
+  headline?: string;
+  closingText?: string;
+  totalDuration: number;
+}): string {
+  if (!params.labelFontPresent) return '';
+  const filters: string[] = [];
+
+  if (params.headline?.trim()) {
+    filters.push(
+      `drawtext=fontfile=${LABEL_FONT_FILE}:textfile=card-titulo.txt:x=(w-text_w)/2:y=h*0.14:fontsize=54:line_spacing=14:fontcolor=white:box=1:boxcolor=black@0.68:boxborderw=26:enable='between(t,0.12,2.0)'`,
+    );
+  }
+
+  if (params.closingText?.trim()) {
+    const end = Math.max(3, params.totalDuration - 0.1);
+    const start = Math.max(0.5, end - 2.8);
+    // O CTA já entra como última linha do mesmo arquivo: um único drawtext,
+    // sem risco de sobrepor a legenda ou a si mesmo.
+    filters.push(
+      `drawtext=fontfile=${LABEL_FONT_FILE}:textfile=card-fechamento.txt:x=(w-text_w)/2:y=h*0.10:fontsize=48:line_spacing=12:fontcolor=white:box=1:boxcolor=black@0.72:boxborderw=24:enable='between(t,${start.toFixed(2)},${end.toFixed(2)})'`,
+    );
+  }
 
   return filters.join(',');
 }
@@ -256,6 +388,14 @@ export async function renderVerticalShortMp4(params: {
   srtContent: string;
   audioBase64?: string;
   narration?: RenderNarrationOptions;
+  /** 'alta' (padrao): cortes curtos, camera variada e transicoes. */
+  dynamics?: 'alta' | 'normal';
+  /** Legenda queimada: karaoke (palavra a palavra) ou classica. */
+  captions?: 'karaoke' | 'classica';
+  /** Manchete grande nos primeiros 2 s (gancho). */
+  headline?: string;
+  /** Pergunta de engajamento no card final. */
+  closingText?: string;
   /** Progresso do render: etapa, percentual (0–99) e mensagem curta. */
   onProgress?: (stage: string, pct: number, message?: string) => void;
 }): Promise<RenderResult> {
@@ -316,21 +456,43 @@ export async function renderVerticalShortMp4(params: {
       );
     }
 
+    const dynamicsHigh = params.dynamics !== 'normal';
     const segmentFiles: string[] = [];
     let segIdx = 0;
     let totalDuration = 0;
     /** Cena conseguiu exibir alguma mídia? Decide se o avatar entra nela. */
     const sceneVisuals: boolean[] = new Array(plannedDurations.length).fill(false);
+    /** Segundo em que o primeiro corte acontece (gancho precisa ser ≤ 1,5 s). */
+    let firstCutSec = 0;
 
     for (let sceneIndex = 0; sceneIndex < plannedDurations.length; sceneIndex++) {
       const scene = params.scenes[sceneIndex];
       const sceneDur = sceneDurations[sceneIndex];
       totalDuration += sceneDur;
-      const items = scene.mediaItems.slice(0, 4);
-      const slots = items.length ? items : [null];
-      const slotDur = Math.max(1.5, Number((sceneDur / slots.length).toFixed(2)));
 
-      for (const item of slots) {
+      const items = scene.mediaItems.slice(0, 4);
+      // Shots de ~2,8 s mesmo com uma única foto: quando falta mídia, o mesmo
+      // arquivo entra com recorte diferente (wide / médio / detalhe).
+      const maxShotSec = dynamicsHigh ? 2.8 : 10;
+      const shotCount = Math.max(1, Math.min(4, Math.ceil(sceneDur / maxShotSec)));
+
+      const shotDurations: number[] =
+        shotCount === 1
+          ? [sceneDur]
+          : (() => {
+              // Primeiro shot curto: o primeiro corte precisa acontecer cedo.
+              const first = Math.min(1.5, Math.max(1.0, sceneDur * 0.18));
+              const rest = (sceneDur - first) / (shotCount - 1);
+              const values = [first, ...Array.from({ length: shotCount - 1 }, () => rest)];
+              const sum = values.reduce((acc, value) => acc + value, 0);
+              values[values.length - 1] += sceneDur - sum;
+              return values;
+            })();
+
+      for (let shotIndex = 0; shotIndex < shotDurations.length; shotIndex++) {
+        const shotDur = Math.max(1.0, Number(shotDurations[shotIndex].toFixed(2)));
+        const item = items.length ? items[shotIndex % items.length] : null;
+        const cropVariant = items.length > 1 ? 0 : shotIndex % 3;
         let localMedia: { path: string; kind: 'image' | 'video' } | null = null;
 
         if (item) {
@@ -361,29 +523,33 @@ export async function renderVerticalShortMp4(params: {
         // Imagem parada (do acervo, da matéria ou o cenário do estúdio) recebe
         // Ken Burns e moldura desfocada; vídeo de verdade já preenche a tela.
         const isStill = localMedia ? localMedia.kind === 'image' : Boolean(fallbackImg);
-        const motionFilter = isStill ? buildKenBurnsFilter(segIdx, slotDur) : '';
-        // Transição curta a cada troca de imagem (o primeiro quadro do vídeo não
-        // precisa: viria de preto sem motivo).
-        const fadeIn = segIdx > 1;
-        const segmentFilter = `${fadeIn ? 'fade=t=in:st=0:d=0.18,' : ''}${buildSegmentFilter('')}`;
+
+        // Transições: corte seco é a maioria; flash e punch aparecem espaçados.
+        const transition: 'cut' | 'punch' | 'flash' =
+          segIdx <= 1 ? 'cut' : segIdx % 5 === 0 ? 'flash' : segIdx % 3 === 0 ? 'punch' : 'cut';
+
+        const motionFilter = isStill
+          ? buildKenBurnsFilter(segIdx, shotDur, { punch: transition === 'punch' })
+          : '';
+        const segmentFilter = `${buildTransitionFilter(transition)}${buildSegmentFilter('')}`;
 
         const ffmpegArgs: string[] = ['-y'];
         if (localMedia) {
           if (localMedia.kind === 'video') {
-            ffmpegArgs.push('-stream_loop', '-1', '-t', String(slotDur), '-i', localMedia.path);
+            ffmpegArgs.push('-stream_loop', '-1', '-t', String(shotDur), '-i', localMedia.path);
           } else {
-            ffmpegArgs.push('-loop', '1', '-framerate', '30', '-t', String(slotDur), '-i', localMedia.path);
+            ffmpegArgs.push('-loop', '1', '-framerate', '30', '-t', String(shotDur), '-i', localMedia.path);
           }
         } else if (fallbackImg) {
-          ffmpegArgs.push('-loop', '1', '-framerate', '30', '-t', String(slotDur), '-i', fallbackImg);
+          ffmpegArgs.push('-loop', '1', '-framerate', '30', '-t', String(shotDur), '-i', fallbackImg);
         } else {
-          ffmpegArgs.push('-f', 'lavfi', '-t', String(slotDur), '-i', 'color=c=#0a0f18:s=1080x1920:r=30');
+          ffmpegArgs.push('-f', 'lavfi', '-t', String(shotDur), '-i', 'color=c=#0a0f18:s=1080x1920:r=30');
         }
 
         if (isStill) {
           ffmpegArgs.push(
             '-filter_complex',
-            buildStillFilterComplex(motionFilter, fadeIn),
+            buildStillFilterComplex(motionFilter, transition, cropZoomForVariant(cropVariant)),
             '-map',
             '[vout]',
           );
@@ -408,17 +574,21 @@ export async function renderVerticalShortMp4(params: {
           const fallbackArgs = [
             '-y',
             ...(fallbackImg
-              ? ['-loop', '1', '-framerate', '30', '-t', String(slotDur), '-i', fallbackImg]
-              : ['-f', 'lavfi', '-t', String(slotDur), '-i', 'color=c=#0a0f18:s=1080x1920:r=30']),
+              ? ['-loop', '1', '-framerate', '30', '-t', String(shotDur), '-i', fallbackImg]
+              : ['-f', 'lavfi', '-t', String(shotDur), '-i', 'color=c=#0a0f18:s=1080x1920:r=30']),
             '-an',
             ...(fallbackImg
               ? [
                   '-filter_complex',
-                  buildStillFilterComplex(buildKenBurnsFilter(segIdx, slotDur), fadeIn),
+                  buildStillFilterComplex(
+                    buildKenBurnsFilter(segIdx, shotDur, { punch: transition === 'punch' }),
+                    transition,
+                    1,
+                  ),
                   '-map',
                   '[vout]',
                 ]
-              : ['-vf', `${fadeIn ? 'fade=t=in:st=0:d=0.18,' : ''}${buildSegmentFilter('')}`]),
+              : ['-vf', segmentFilter]),
             '-c:v',
             'libx264',
             '-preset',
@@ -430,13 +600,14 @@ export async function renderVerticalShortMp4(params: {
           await execFileAsync('ffmpeg', fallbackArgs, { timeout: 25_000 });
         }
 
+        if (segmentFiles.length === 0) firstCutSec = shotDur;
         segmentFiles.push(segName);
 
         const buildPct = 44 + (segmentFiles.length / Math.max(1, totalSegments)) * 26;
         params.onProgress?.(
           'montagem',
           buildPct,
-          `Montando cena ${sceneIndex + 1} de ${plannedDurations.length}…`,
+          `Montando cena ${sceneIndex + 1} de ${plannedDurations.length} (shot ${shotIndex + 1}/${shotDurations.length})…`,
         );
       }
     }
@@ -472,6 +643,31 @@ export async function renderVerticalShortMp4(params: {
       } catch {
         labelFontPresent = false;
       }
+    }
+
+    // Legenda karaokê (palavra a palavra). O SRT/VTT continua no pacote e no
+    // YouTube; o ASS é só o que aparece queimado no vídeo.
+    const captionMode = params.captions ?? 'karaoke';
+    let subtitleFile = 'legendas.srt';
+    if (captionMode === 'karaoke') {
+      const retimedForAss = retimeSubtitles(params.srtContent, plannedDurations, sceneDurations);
+      const ass = buildKaraokeAss(retimedForAss, { fontSize: 58, marginV: 250, maxWordsPerChunk: 3 });
+      if (ass.includes('Dialogue:')) {
+        await writeFile(join(workDir, 'legendas.ass'), ass.normalize('NFC'), 'utf8');
+        subtitleFile = 'legendas.ass';
+      }
+    }
+
+    // Cards: `textfile` evita escapar acento e quebra de linha no drawtext.
+    if (params.headline?.trim()) {
+      await writeFile(join(workDir, 'card-titulo.txt'), wrapForCard(params.headline, 22), 'utf8');
+    }
+    if (params.closingText?.trim()) {
+      await writeFile(
+        join(workDir, 'card-fechamento.txt'),
+        `${wrapForCard(params.closingText, 20)}\n\nCOMENTE AQUI EMBAIXO`,
+        'utf8',
+      );
     }
 
     // Avatar: o apresentador não disputa espaço com a foto do fato.
@@ -566,7 +762,9 @@ export async function renderVerticalShortMp4(params: {
           ];
 
     const buildFilterGraph = (includeLabel: boolean, includeAvatar: boolean): string => {
-      const parts: string[] = [`[0:v]${buildVideoFilter(includeLabel)}[vb0]`];
+      const parts: string[] = [
+        `[0:v]${buildVideoFilter({ includeLabel, subtitleFile, totalDuration })}[vb0]`,
+      ];
       let last = 'vb0';
 
       if (includeAvatar && hasAvatar) {
@@ -635,6 +833,18 @@ export async function renderVerticalShortMp4(params: {
         addWindows(pipWindows, needsSplit ? 'avsrcP' : '2:v', 'scale=430:-1', 'W-w-52', '110');
       }
 
+      // Cards por cima de tudo: gancho (0–2 s) e pergunta de fechamento.
+      const cards = buildCardFilters({
+        labelFontPresent,
+        headline: params.headline,
+        closingText: params.closingText,
+        totalDuration,
+      });
+      if (cards) {
+        parts.push(`[${last}]${cards}[vcard]`);
+        last = 'vcard';
+      }
+
       parts.push(`[${last}]format=yuv420p[vout]`);
       return parts.join(';');
     };
@@ -701,6 +911,12 @@ export async function renderVerticalShortMp4(params: {
       ttsEngine: narrationTrack?.engineUsed,
       ttsVoice: narrationTrack?.voiceUsed,
       ttsModel: narrationTrack?.ttsModel,
+      dynamics: dynamicsHigh ? 'alta' : 'normal',
+      cuts: segmentFiles.length,
+      avgShotSec: segmentFiles.length
+        ? Number((totalDuration / segmentFiles.length).toFixed(2))
+        : undefined,
+      firstCutSec: Number(firstCutSec.toFixed(2)),
     };
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);

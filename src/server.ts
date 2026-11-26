@@ -478,6 +478,10 @@ interface RenderSpec {
   srtContent: string;
   audioBase64?: string;
   narration?: RenderNarrationOptions;
+  dynamics?: 'alta' | 'normal';
+  captions?: 'karaoke' | 'classica';
+  headline?: string;
+  closingText?: string;
   artifacts: { manifestJson: string; scriptText: string; qcReport?: unknown };
 }
 
@@ -561,6 +565,12 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
     return { status: 400, error: 'Identificador de pauta inválido.' };
   }
 
+  const dynamics = body?.['dynamics'] === 'normal' ? 'normal' : 'alta';
+  const captions = body?.['captions'] === 'classica' ? 'classica' : 'karaoke';
+  const headline = typeof body?.['headline'] === 'string' ? String(body['headline']) : undefined;
+  const closingText =
+    typeof body?.['closingText'] === 'string' ? String(body['closingText']) : undefined;
+
   const artifactsBody = body?.['artifacts'] as Record<string, unknown> | undefined;
   const artifacts = {
     manifestJson: typeof artifactsBody?.['manifestJson'] === 'string' ? String(artifactsBody['manifestJson']) : '{}',
@@ -569,7 +579,19 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
   };
 
   return {
-    spec: { pautaId, mode, scenes, srtContent, audioBase64, narration, artifacts },
+    spec: {
+      pautaId,
+      mode,
+      scenes,
+      srtContent,
+      audioBase64,
+      narration,
+      dynamics,
+      captions,
+      headline,
+      closingText,
+      artifacts,
+    },
   };
 }
 
@@ -613,6 +635,10 @@ async function executeRender(
     srtContent: spec.srtContent,
     audioBase64: spec.audioBase64,
     narration: spec.narration,
+    dynamics: spec.dynamics,
+    captions: spec.captions,
+    headline: spec.headline,
+    closingText: spec.closingText,
     onProgress: report,
   });
 
@@ -632,6 +658,10 @@ async function executeRender(
     durationSec: result.durationSec,
     narrationRate: result.narrationRate,
     tts: { engine: result.ttsEngine, voice: result.ttsVoice, model: result.ttsModel },
+    dynamics: result.dynamics,
+    cuts: result.cuts,
+    avgShotSec: result.avgShotSec,
+    firstCutSec: result.firstCutSec,
   });
 
   return {
@@ -738,6 +768,10 @@ app.post('/api/export/render-mp4', async (req, res) => {
         srtContent: parsed.spec.srtContent,
         audioBase64: parsed.spec.audioBase64,
         narration: parsed.spec.narration,
+        dynamics: parsed.spec.dynamics,
+        captions: parsed.spec.captions,
+        headline: parsed.spec.headline,
+        closingText: parsed.spec.closingText,
       });
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Content-Disposition', 'attachment; filename="canal-dark-9x16.mp4"');

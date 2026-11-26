@@ -51,6 +51,11 @@ export interface RenderArtifactsInput {
   narrationRate?: number;
   /** Motor e voz usados na narração (Gemini TTS / Edge). */
   tts?: { engine?: string; voice?: string; model?: string };
+  /** Ritmo visual do render (auditoria de retenção). */
+  dynamics?: string;
+  cuts?: number;
+  avgShotSec?: number;
+  firstCutSec?: number;
 }
 
 export interface RenderArtifactsResult {
@@ -189,6 +194,10 @@ export async function saveRenderArtifacts(
         durationSec: input.durationSec,
         narrationRate: input.narrationRate ?? null,
         tts: input.tts ?? null,
+        dynamics: input.dynamics ?? null,
+        cuts: input.cuts ?? null,
+        avgShotSec: input.avgShotSec ?? null,
+        firstCutSec: input.firstCutSec ?? null,
         renderedAt: new Date().toISOString(),
       },
       null,

@@ -10,7 +10,7 @@ export type PipelineStage =
   | 'PUBLISHED'
   | 'REJECTED';
 
-export type ScriptVersionMode = 'short' | 'expanded';
+export type ScriptVersionMode = 'rapido' | 'short' | 'expanded';
 
 export type EditorialCategory =
   | 'Todas'
@@ -178,6 +178,10 @@ export interface NarrationState {
   voiceName: string;
   /** Preset de estilo do Gemini TTS (ancora, explicativo, urgente, leve, neutro). */
   style?: string;
+  /** Dinamica visual: cortes curtos, camera variada e transicoes. */
+  dynamics?: 'alta' | 'normal';
+  /** Estilo da legenda queimada no video. */
+  captions?: 'karaoke' | 'classica';
   rate: number;
   audioFileName?: string;
   audioDurationSec?: number;

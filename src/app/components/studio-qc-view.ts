@@ -409,6 +409,29 @@ import { NarrationVoicePicker } from './narration-voice-picker';
 
               @if (autoNarration()) {
                 <app-narration-voice-picker />
+
+                <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
+                  <label class="inline-flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      [checked]="dynamicsAlta()"
+                      (change)="toggleDynamics()"
+                      class="h-3.5 w-3.5 accent-[#e59a38]"
+                    />
+                    <span title="Cortes a cada ~2,8 s, câmera variada e transições">
+                      Dinâmica alta (corte a cada ~2,8 s)
+                    </span>
+                  </label>
+                  <label class="inline-flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      [checked]="karaoke()"
+                      (change)="toggleKaraoke()"
+                      class="h-3.5 w-3.5 accent-[#e59a38]"
+                    />
+                    <span title="Destaque palavra a palavra no vídeo">Legenda karaokê</span>
+                  </label>
+                </div>
               }
 
               <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-200">
@@ -651,6 +674,25 @@ export class StudioQcView {
   readonly channelLabel = computed(
     () => this.store.configStatus()?.channelLabel || 'NOTÍCIAS NA BRASA · APRESENTADOR VIRTUAL',
   );
+
+  readonly dynamicsAlta = computed(() => this.store.activePauta()?.narration.dynamics !== 'normal');
+  readonly karaoke = computed(() => this.store.activePauta()?.narration.captions !== 'classica');
+
+  toggleDynamics(): void {
+    const pauta = this.store.activePauta();
+    if (!pauta) return;
+    this.store.updateNarrationState(pauta.id, {
+      dynamics: this.dynamicsAlta() ? 'normal' : 'alta',
+    });
+  }
+
+  toggleKaraoke(): void {
+    const pauta = this.store.activePauta();
+    if (!pauta) return;
+    this.store.updateNarrationState(pauta.id, {
+      captions: this.karaoke() ? 'classica' : 'karaoke',
+    });
+  }
 
   readonly autoNarration = signal(true);
   readonly avatarInVideo = signal(true);
@@ -923,11 +965,15 @@ export class StudioQcView {
           voice: pauta.narration.voiceName || undefined,
           style: pauta.narration.style,
           rate: pauta.narration.rate,
-          // Piso de monetização: a voz desacelera (Edge) ou o tempo é
-          // distribuído (Gemini) para passar de 1 minuto.
+          // Piso só no modo "monetizável"; rápido/curto respiram sozinhos.
           minSeconds: pauta.script?.mode === 'expanded' ? 62 : 0,
           fallbackToEdge: true,
         },
+        dynamics: pauta.narration.dynamics ?? 'alta',
+        captions: pauta.narration.captions ?? 'karaoke',
+        // Gancho na tela nos 2 primeiros segundos: o hook do roteiro.
+        headline: (pauta.script?.hook || pauta.script?.suggestedTitle || '').trim().slice(0, 140),
+        closingText: (pauta.script?.closing || '').trim() || undefined,
         artifacts: {
           manifestJson: this.store.buildRightsManifest(pauta),
           scriptText: this.store.buildScriptAndDescriptionText(pauta),

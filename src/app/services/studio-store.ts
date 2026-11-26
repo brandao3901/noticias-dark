@@ -1812,6 +1812,37 @@ export class StudioStore {
         : 'Gere a amostra de voz e confirme a narração pt-BR (Gemini TTS) antes de renderizar.',
     });
 
+    // Ritmo: as métricas do canal mostram que 70 s derruba a retenção. O alvo
+    // é o modo rápido (~42 s), com fechamento em pergunta para gerar comentário.
+    {
+      const scriptScenes = pauta.script?.scenes ?? [];
+      const words = scriptScenes.reduce(
+        (acc, scene) => acc + (scene.narration ?? '').split(/\s+/).filter(Boolean).length,
+        0,
+      );
+      const scriptMode = pauta.script?.mode ?? 'rapido';
+      const targetSec = scriptMode === 'expanded' ? 62 : scriptMode === 'rapido' ? 42 : 50;
+      const estimatedSec = words / 2.5;
+      const closingIsQuestion = /\?/.test(pauta.script?.closing ?? '');
+      const withinTarget = estimatedSec >= targetSec - 8 && estimatedSec <= targetSec + 10;
+
+      items.push({
+        id: 'qc-pacing',
+        label: 'Ritmo, gancho e fechamento',
+        severity: withinTarget && closingIsQuestion ? 'pass' : 'warning',
+        detail:
+          `${words} palavras ≈ ${estimatedSec.toFixed(0)} s (alvo ${targetSec} s). ` +
+          (withinTarget
+            ? 'Duração no ponto. '
+            : estimatedSec > targetSec
+              ? 'Está longo: corte contexto, fique no fato e no desfecho. '
+              : 'Está curto: falta o desfecho ou a consequência. ') +
+          (closingIsQuestion
+            ? 'Fechamento com pergunta ✓'
+            : 'Termine o roteiro com uma pergunta ao público (gera comentário).'),
+      });
+    }
+
     // 5. Política de duração: o menor vídeo que ainda monetiza (Critério 15).
     // Abaixo de 1 minuto fica fora do compartilhamento de receita do feed de
     // Shorts; acima de 3 minutos deixa de ser Short.

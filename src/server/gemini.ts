@@ -353,16 +353,18 @@ export async function generateStructuredShortScript(params: {
 
   const allowedSourceIds = new Set(params.sources.map((s) => s.id));
 
-  // A meta editorial e o menor video que ainda monetiza: passar de 1 minuto
-  // sem esticar. A versao "monetizavel" nao e um video longo, e sim o curto com
-  // o respiro necessario para chegar aos 60-75s.
-  const MIN_WORDS = params.mode === 'short' ? 90 : 150;
-  // Modelos seguem melhor "X palavras por cena" do que um total solto: o
-  // intervalo por cena garante o minuto de monetização sem texto inflado.
+  // Meta editorial por modo:
+  //  - rapido: o formato que retém. Fato + desfecho em ~40 s, sem gordura.
+  //  - short:  versão intermediária (~50 s) para pauta com mais contexto.
+  //  - expanded: 60-75 s, quando a pauta realmente pede espaço.
+  const MIN_WORDS = params.mode === 'rapido' ? 100 : params.mode === 'short' ? 90 : 150;
+  // Modelos seguem melhor "X palavras por cena" do que um total solto.
   const sceneGuide =
-    params.mode === 'short'
-      ? '6 cenas, cada uma com 15 a 20 palavras de narração (total de 90 a 120 palavras, 45 a 58 segundos)'
-      : '6 cenas, cada uma com 26 a 32 palavras de narração (total de 156 a 192 palavras, 60 a 75 segundos)';
+    params.mode === 'rapido'
+      ? '4 cenas, cada uma com 25 a 30 palavras de narração (total de 100 a 125 palavras, 38 a 48 segundos)'
+      : params.mode === 'short'
+        ? '6 cenas, cada uma com 15 a 20 palavras de narração (total de 90 a 120 palavras, 45 a 58 segundos)'
+        : '6 cenas, cada uma com 26 a 32 palavras de narração (total de 156 a 192 palavras, 60 a 75 segundos)';
 
   const evidenceBlock = params.sources
     .map(
@@ -383,6 +385,10 @@ export async function generateStructuredShortScript(params: {
       `3. Apresente o fato principal logo no gancho inicial e explique por que importa, sem sensacionalismo nem suspense enganoso.`,
       `4. Se houver apenas uma fonte ou pontos em aberto, registre claramente em uncertaintyNote e na narração.`,
       `5. Forneça termos de busca visual em português (visualQueryPt) e inglês (visualQueryEn) para acervos gratuitos (Wikimedia Commons / Internet Archive).`,
+      `6. GANCHO (hook): no máximo 14 palavras — pergunta direta ou fato de impacto. A PRIMEIRA cena começa pelo hook, sem contextualização formal ("o ator fez um balanço..." é proibido).`,
+      `7. FECHAMENTO (closing): uma pergunta curta e direta ao público, convidando a comentar (ex.: "Você acha que ele deve continuar nas novelas?").`,
+      `8. Título sugerido: no máximo 90 caracteres, com o fato principal; sem "clique", sem caixa alta.`,
+      `9. Sem chamadas de áudio/vídeo ("veja o vídeo", "assista"), sem "inscreva-se" dentro da narração — isso vai na tela, não na locução.`,
       ``,
       correction ? `CORREÇÃO NECESSÁRIA: ${correction}\n` : '',
       params.geminiContextSummary ? `Síntese URL Context: ${params.geminiContextSummary}\n` : '',
