@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { PautaRecord } from '../app/models/studio.models';
@@ -90,11 +90,31 @@ export async function writeProject(id: string, project: PautaRecord): Promise<vo
   await writeFile(join(dir, 'project.json'), JSON.stringify(project, null, 2), 'utf8');
 }
 
+/**
+ * Excluir manda a pauta para `projects/.trash` em vez de apagar de vez.
+ *
+ * O botão de excluir é um clique só e o vídeo pode ter custado minutos de
+ * render — sem lixeira, um clique errado (ou um clique acidental durante um
+ * travamento da página) leva o pacote inteiro embora.
+ */
 export async function deleteProject(id: string): Promise<boolean> {
   const dir = projectDir(id);
   if (!existsSync(dir)) return false;
-  await rm(dir, { recursive: true, force: true });
-  return true;
+
+  const trash = join(projectsRoot(), '.trash');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const target = join(trash, `${id}-${stamp}`);
+
+  try {
+    await mkdir(trash, { recursive: true });
+    await rename(dir, target);
+    return true;
+  } catch {
+    // Falhou mover (permissão/disco): apaga como antes, mas informa no log.
+    console.warn('[projects] não foi possível mover para .trash; excluindo', id);
+    await rm(dir, { recursive: true, force: true });
+    return true;
+  }
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {

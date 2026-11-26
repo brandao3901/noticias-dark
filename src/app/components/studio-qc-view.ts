@@ -34,7 +34,7 @@ import { NarrationVoicePicker } from './narration-voice-picker';
             @if (activeScene(); as scene) {
               <!-- Mídia de apoio licenciada ao fundo (alterna automaticamente quando houver múltiplos ativos) -->
               @if (currentSceneAsset(); as asset) {
-                @if (asset.kind === 'video' && (asset.mediaUrl.endsWith('.mp4') || asset.mediaUrl.endsWith('.webm'))) {
+                @if (asset.kind === 'video' && !modoLeve() && (asset.mediaUrl.endsWith('.mp4') || asset.mediaUrl.endsWith('.webm'))) {
                   <video
                     [src]="asset.mediaUrl"
                     [poster]="asset.thumbUrl"
@@ -659,6 +659,11 @@ import { NarrationVoicePicker } from './narration-voice-picker';
 export class StudioQcView {
   readonly store = inject(StudioStore);
   readonly speech = inject(SpeechPreview);
+
+  /** Modo leve: sem vídeo de prévia (economiza memória em sessões longas). */
+  readonly modoLeve = signal(
+    typeof localStorage !== 'undefined' && localStorage.getItem('canal_dark_modo_leve') === '1',
+  );
 
   readonly approvalNoteControl = new FormControl('', { nonNullable: true });
   readonly copiedFfmpeg = signal(false);

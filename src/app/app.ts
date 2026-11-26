@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { MatIconModule } from '@angular/material/icon';
 import { DiscoveryView } from './components/discovery-view';
 import { DossierView } from './components/dossier-view';
+import { MemoryGuard } from './components/memory-guard';
 import { MediaVoiceView } from './components/media-voice-view';
 import { ScriptView } from './components/script-view';
 import { StudioQcView } from './components/studio-qc-view';
@@ -18,6 +19,7 @@ type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
     DatePipe,
     DiscoveryView,
     DossierView,
+    MemoryGuard,
     ScriptView,
     MediaVoiceView,
     StudioQcView,
@@ -25,6 +27,7 @@ type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="min-h-screen flex flex-col bg-[#0a0d12] text-[#e6eaf0]">
+      <app-memory-guard />
       <!-- Top Bar Contract: 3 zonas (Marca, 5 links de uma linha, 1 ação primária) -->
       <header class="sticky top-0 z-30 border-b border-white/10 bg-[#0a0d12]/95 backdrop-blur">
         <div class="mx-auto flex max-w-[1440px] items-center justify-between gap-8 px-6 py-3.5">

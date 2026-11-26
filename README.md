@@ -33,6 +33,31 @@ python -m streamlit run studio_app.py --server.runOnSave true
 
 Abre em http://localhost:8501 (abas Gerar vídeo / Estúdio de voz / Histórico).
 
+## Gerar vídeo pelo terminal (sem navegador)
+
+Se a página estiver pesando, nenhum vídeo precisa passar pelo navegador:
+
+```bash
+npm run cli -- list                                  # pautas salvas
+npm run render -- <pautaId> --formato cartoes --voz blend --abrir
+```
+
+- `--formato fotos|documento|cartoes`, `--voz blend|pm_alex|pf_dora|pm_santa|Kore`, `--motor kokoro|gemini|edge`
+- O CLI sobe o servidor de produção sozinho se a porta estiver livre, mostra o progresso no terminal e imprime o caminho do MP4.
+- No Windows: duplo clique em **`render.bat`** (menu com as pautas e o formato).
+
+## Interface como app
+
+**`CanalDark.bat`** compila (só quando o código muda), sobe em modo produção e abre numa
+**janela de app** (Edge/Chrome `--app`, sem abas nem barra de endereço). Use `CanalDark.bat --dev`
+para o modo desenvolvimento com hot reload.
+
+O app também é instalável: **`manifest.webmanifest`** + ícones → "Instalar Canal Dark" no navegador
+abre em janela própria com atalho.
+
+Se a aba ficar pesada, aparece um aviso com **Recarregar** e **Modo leve** (desliga o vídeo de
+prévia). Nada se perde: o estado vem do servidor.
+
 ## Requisitos
 
 | Item | Versão / observação |

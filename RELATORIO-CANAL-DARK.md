@@ -1304,3 +1304,46 @@ Variável `CANAL_DARK_NO_BROWSER=1` impede a abertura automática (útil em test
 
 Testado nos dois caminhos: servidor já rodando (sai em 0 sem duplicar processo) e partida
 fria (app no ar em 6 s, voz do canal ativa).
+
+---
+
+## 26. Rodar sem navegador: CLI, modo app e lixeira (26/11/2026)
+
+Problema: a aba do Chrome caía com **Out of Memory** em sessões longas (modo dev + hot reload,
+prévia de mídia carregando vídeo inteiro, SSE sem fechar).
+
+### 26.1 CLI (`scripts/render-cli.mjs`)
+
+- `npm run cli -- list` e `npm run render -- <id> --formato … --voz …`
+- Sobe o servidor de produção sozinho (`dist/` compilado na hora se faltar), usa
+  `POST /api/studio/render/:id`, desenha a barra de progresso e imprime caminho, duração,
+  formato, voz e cortes.
+- **Nenhuma aba envolvida** — resolve o OOM por construção.
+- `render.bat`: menu de pauta e formato para uso sem terminal.
+
+### 26.2 Modo app
+
+- `CanalDark.bat` agora compila quando o código mudou, sobe `npm start` (produção) e abre em
+  janela `--app` do Edge/Chrome (fallback: navegador padrão). `CanalDark.bat --dev` mantém o HMR.
+- PWA: `public/manifest.webmanifest` + ícones 192/512/apple-touch, `display: standalone`.
+
+### 26.3 Memória
+
+- `MemoryGuard`: aviso quando o heap passa de ~600 MB (ou 55% do limite), com **Recarregar** e
+  **Modo leve** (desliga o vídeo de prévia — o maior consumidor).
+- `render-queue` fecha o `EventSource` no destroy.
+
+### 26.4 Lixeira
+
+`deleteProject` passou a **mover** a pauta para `projects/.trash/<id>-<data>` em vez de apagar.
+Motivo: o botão de excluir é um clique e some com vídeo + dossiê; 7 pautas foram perdidas hoje
+assim (não havia lixeira). Para esvaziar: apague a pasta `.trash` quando quiser.
+
+### 26.5 Validação
+
+| Teste | Resultado |
+|---|---|
+| `cli list` | lista pautas com estágio e se têm vídeo |
+| `render --formato cartoes` | 25 s, 15 cortes, plano 2,97 s, `formato: cards` |
+| `render --formato fotos` | 55 s, 18 cortes, 8 MB |
+| produção | app 200, `manifest.webmanifest` 200, ícone 200, HTML aponta o manifest |
