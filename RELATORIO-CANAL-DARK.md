@@ -1347,3 +1347,45 @@ assim (não havia lixeira). Para esvaziar: apague a pasta `.trash` quando quiser
 | `render --formato cartoes` | 25 s, 15 cortes, plano 2,97 s, `formato: cards` |
 | `render --formato fotos` | 55 s, 18 cortes, 8 MB |
 | produção | app 200, `manifest.webmanifest` 200, ícone 200, HTML aponta o manifest |
+
+---
+
+## 27. Cena parada: controle de movimento (26/11/2026)
+
+Pedido: tirar o movimento das cenas.
+
+### 27.1 O que existia
+
+| Fonte de movimento | Onde |
+|---|---|
+| Ken Burns (6 variantes: zoom in/out, pan, diagonal) | `buildKenBurnsFilter` |
+| `flash` (fade branco 0,07 s) e `punch` (zoom soco) | escolha de transição por corte |
+| Rolagem da página | modo documento (`crop` animado por `t`) |
+| Alternância tipografia↔cartão | modo cartões (~3 s por cartão) |
+
+### 27.2 Regra nova
+
+`motion: 'none' | 'kenburns'` (padrão **none**), por pauta, no render e no CLI (`--movimento parado|kenburns`).
+
+Com **Parado**:
+- fotos: imagem fixa (sem `zoompan`, transição sempre `cut`, sem flash/punch);
+- documento: página enquadrada no topo, sem rolagem;
+- cartões: **um cartão por cena** (sem troca no meio).
+
+### 27.3 Prova (PSNR de frames a 0,15 s de distância, mesma cena)
+
+| Modo | PSNR | Leitura |
+|---|---|---|
+| Fotos + Parado | **67,7 dB** | praticamente idêntico = sem movimento |
+| Fotos + Ken Burns | **23,3 dB** | movimento real |
+| Documento + Parado | **67,5 dB** | sem rolagem |
+| Cartões + Parado | 3 cortes (3 cenas) | 1 cartão por cena |
+| Cartões + Ken Burns | 5 cortes | alternância normal |
+
+> Nota de método: a primeira medição deu "diferente" por causa da legenda e do card de gancho
+> (que sai aos 2 s); a comparação passou a usar recorte sem legenda e instantes após o gancho.
+
+### 27.4 Interface
+
+Select **Movimento** ao lado de **Formato** no Estúdio e QC, gravado em
+`pauta.narration.motion` e enviado no payload do render.

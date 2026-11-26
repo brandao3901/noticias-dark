@@ -422,6 +422,8 @@ export async function renderVerticalShortMp4(params: {
   captions?: 'karaoke' | 'classica';
   /** Manchete grande nos primeiros 2 s (gancho). */
   headline?: string;
+  /** Movimento da cena: 'none' (padrão) = imagem parada; 'kenburns' = zoom/pan. */
+  motion?: 'none' | 'kenburns';
   /** Editoria da pauta; vira a linha fina dos cartoes. */
   editorial?: string;
   /** Pergunta de engajamento no card final. */
@@ -489,6 +491,8 @@ export async function renderVerticalShortMp4(params: {
     const dynamicsHigh = params.dynamics !== 'normal';
     const documentMode = params.videoMode === 'documento' && (params.sources?.length ?? 0) > 0;
     const cardsMode = params.videoMode === 'cards';
+    // Cena parada (padrão): sem Ken Burns, sem flash/punch e sem rolagem.
+    const motionEnabled = params.motion === 'kenburns';
     const segmentFiles: string[] = [];
     let segIdx = 0;
     let totalDuration = 0;
@@ -540,10 +544,12 @@ export async function renderVerticalShortMp4(params: {
           domain: source?.domain,
           entity: (scene as { detectedEntities?: string[] }).detectedEntities?.[0],
         });
-        // Ritmo: um cartão a cada ~3 s, no máximo 3 por cena. A narração pode
-        // ter uma frase só; alternamos tipo/cartão para o vídeo não ficar parado.
+        // Cena parada: um cartão por cena. Com movimento, um cartão a cada ~3 s
+        // (até 3), alternando tipografia e cartão.
         const maxPerScene = params.scenes.length > 10 ? 1 : 3;
-        const targetBeats = Math.max(1, Math.min(maxPerScene, Math.round(sceneDur / 3)));
+        const targetBeats = motionEnabled
+          ? Math.max(1, Math.min(maxPerScene, Math.round(sceneDur / 3)))
+          : 1;
         const useBeats = Array.from({ length: targetBeats }, (_, index) => beats[index % beats.length] ?? beats[0] ?? {});
         const beatDur = Math.max(1.2, sceneDur / Math.max(1, useBeats.length));
         const domains = Array.from(
@@ -643,9 +649,12 @@ export async function renderVerticalShortMp4(params: {
 
         if (page) {
           const scrolls = page.height > 1920;
-          const filter = scrolls
+          // Cena parada: mostra a página no topo, sem rolar.
+          const filter = scrolls && motionEnabled
             ? `scale=1080:-1,crop=1080:1920:0:'(ih-1920)*min(t/${sceneDur.toFixed(3)},1)'`
-            : 'scale=1080:-1,pad=1080:1920:0:0:color=0x0a0d12';
+            : scrolls
+              ? 'scale=1080:-1,crop=1080:1920:0:0'
+              : 'scale=1080:-1,pad=1080:1920:0:0:color=0x0a0d12';
           await execFileAsync(
             'ffmpeg',
             [
@@ -762,13 +771,21 @@ export async function renderVerticalShortMp4(params: {
         // Ken Burns e moldura desfocada; vídeo de verdade já preenche a tela.
         const isStill = localMedia ? localMedia.kind === 'image' : Boolean(fallbackImg);
 
-        // Transições: corte seco é a maioria; flash e punch aparecem espaçados.
-        const transition: 'cut' | 'punch' | 'flash' =
-          segIdx <= 1 ? 'cut' : segIdx % 5 === 0 ? 'flash' : segIdx % 3 === 0 ? 'punch' : 'cut';
+        // Com a cena parada não há flash nem punch: só corte seco entre cenas.
+        const transition: 'cut' | 'punch' | 'flash' = !motionEnabled
+          ? 'cut'
+          : segIdx <= 1
+            ? 'cut'
+            : segIdx % 5 === 0
+              ? 'flash'
+              : segIdx % 3 === 0
+                ? 'punch'
+                : 'cut';
 
-        const motionFilter = isStill
-          ? buildKenBurnsFilter(segIdx, shotDur, { punch: transition === 'punch' })
-          : '';
+        const motionFilter =
+          isStill && motionEnabled
+            ? buildKenBurnsFilter(segIdx, shotDur, { punch: transition === 'punch' })
+            : '';
         const segmentFilter = `${buildTransitionFilter(transition)}${buildSegmentFilter('')}`;
 
         const ffmpegArgs: string[] = ['-y'];

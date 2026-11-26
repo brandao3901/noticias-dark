@@ -1,10 +1,10 @@
 {
   "voice": {
     "engine": "kokoro",
-    "a": "pm_alex",
-    "b": "pm_santa",
+    "a": "pm_santa",
+    "b": "pf_dora",
     "mix": 0.35,
-    "speed": 0.95,
+    "speed": 0.9,
     "lang": "pt-br",
     "file": "voz_canal.npy"
   },

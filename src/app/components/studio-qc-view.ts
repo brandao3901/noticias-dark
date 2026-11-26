@@ -426,6 +426,18 @@ import { NarrationVoicePicker } from './narration-voice-picker';
                     </select>
                   </label>
                   <label class="inline-flex cursor-pointer items-center gap-2">
+                    <span>Movimento</span>
+                    <select
+                      [value]="pauta.narration.motion ?? 'none'"
+                      (change)="onMotion($event)"
+                      title="Parado: imagem fixa, sem zoom, sem flash e sem rolagem"
+                      class="rounded border border-white/15 bg-[#111620] px-2 py-1 text-[11px] text-slate-200"
+                    >
+                      <option value="none">Parado (imagem fixa)</option>
+                      <option value="kenburns">Ken Burns (zoom e pan)</option>
+                    </select>
+                  </label>
+                  <label class="inline-flex cursor-pointer items-center gap-2">
                     <input
                       type="checkbox"
                       [checked]="dynamicsAlta()"
@@ -710,6 +722,15 @@ export class StudioQcView {
     if (!pauta) return;
     this.store.updateNarrationState(pauta.id, {
       captions: this.karaoke() ? 'classica' : 'karaoke',
+    });
+  }
+
+  onMotion(event: Event): void {
+    const pauta = this.store.activePauta();
+    if (!pauta) return;
+    const value = (event.target as HTMLSelectElement).value;
+    this.store.updateNarrationState(pauta.id, {
+      motion: value === 'kenburns' ? 'kenburns' : 'none',
     });
   }
 
@@ -1001,6 +1022,7 @@ export class StudioQcView {
         captions: pauta.narration.captions ?? 'karaoke',
         editorial: pauta.editorial,
         videoMode: pauta.narration.videoMode ?? 'fotos',
+        motion: pauta.narration.motion ?? 'none',
         sources: (pauta.dossier?.sources ?? []).slice(0, 3).map((source) => ({
           title: source.title,
           domain: source.domain,

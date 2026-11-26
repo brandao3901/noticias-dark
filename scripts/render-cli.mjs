@@ -174,6 +174,12 @@ async function renderizar(args) {
     throw new Error(`formato inválido: "${formatoBruto}" (use fotos, documento ou cartoes).`);
   }
   const voz = args.voz ?? 'blend';
+  const movimentoBruto = String(args.movimento ?? '').toLowerCase();
+  const movementMap = { parado: 'none', parada: 'none', none: 'none', kenburns: 'kenburns' };
+  const motion = movimentoBruto ? movementMap[movimentoBruto] : undefined;
+  if (movimentoBruto && !motion) {
+    throw new Error('movimento inválido: use parado ou kenburns.');
+  }
   const motor = args.motor ?? (voz && voz !== 'Kore' && !/^pt-BR-/.test(voz) ? 'kokoro' : undefined);
 
   if (!(await serverOnline())) {
@@ -188,7 +194,7 @@ async function renderizar(args) {
 
   const started = await api(`/api/studio/render/${pautaId}`, {
     method: 'POST',
-    body: JSON.stringify({ videoMode: formato, engine: motor, voice: voz }),
+    body: JSON.stringify({ videoMode: formato, engine: motor, voice: voz, motion }),
   });
 
   const jobId = started.job.id;
@@ -251,6 +257,7 @@ Opções:
   --formato  fotos | documento | cartoes   ${paint('dim', '(padrão: o da pauta)')}
   --voz      blend | pm_alex | pf_dora | pm_santa | Kore | pt-BR-AntonioNeural
   --motor    kokoro | gemini | edge        ${paint('dim', '(padrão: deduzido da voz)')}
+  --movimento parado | kenburns          (padrão: parado)
   --abrir    abre o MP4 no player ao terminar
 
 Exemplo:

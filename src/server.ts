@@ -601,6 +601,8 @@ interface RenderSpec {
   headline?: string;
   closingText?: string;
   editorial?: string;
+  /** Movimento da cena: 'none' (padrão) ou 'kenburns'. */
+  motion?: 'none' | 'kenburns';
   videoMode?: 'fotos' | 'documento' | 'cards';
   sources?: RenderSourceInput[];
   artifacts: { manifestJson: string; scriptText: string; qcReport?: unknown };
@@ -688,6 +690,7 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
   const rawPautaId = typeof body?.['pautaId'] === 'string' ? body['pautaId'] : '';
   const pautaId = rawPautaId ? sanitizeProjectId(rawPautaId) : null;
   const mode: 'final' | 'preview' = body?.['mode'] === 'preview' ? 'preview' : 'final';
+  const motion: 'none' | 'kenburns' = body?.['motion'] === 'kenburns' ? 'kenburns' : 'none';
 
   if (rawPautaId && !pautaId) {
     return { status: 400, error: 'Identificador de pauta inválido.' };
@@ -736,6 +739,7 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
       headline,
       closingText,
       editorial,
+      motion,
       videoMode,
       sources,
       artifacts,
@@ -788,6 +792,7 @@ async function executeRender(
     headline: spec.headline,
     closingText: spec.closingText,
     editorial: spec.editorial,
+    motion: spec.motion,
     videoMode: spec.videoMode,
     sources: spec.sources,
     onProgress: report,
@@ -1538,6 +1543,11 @@ app.post('/api/studio/render/:id', async (req, res) => {
     requestedMode === 'cards' || requestedMode === 'documento' || requestedMode === 'fotos'
       ? (requestedMode as 'cards' | 'documento' | 'fotos')
       : undefined;
+  const requestedMotion = payload['motion'];
+  const motionOverride: 'none' | 'kenburns' | undefined =
+    requestedMotion === 'kenburns' || requestedMotion === 'none'
+      ? (requestedMotion as 'none' | 'kenburns')
+      : undefined;
 
   // Aprovada -> pacote final; caso contrário, prévia (não passa pelo gate).
   const isApproved = project.stage === 'APPROVED';
@@ -1572,6 +1582,7 @@ app.post('/api/studio/render/:id', async (req, res) => {
     dynamics: project.narration?.dynamics ?? 'alta',
     captions: project.narration?.captions ?? 'karaoke',
     videoMode: videoModeOverride ?? project.narration?.videoMode ?? 'fotos',
+    motion: motionOverride ?? project.narration?.motion ?? 'none',
     headline: project.script?.hook || project.script?.suggestedTitle,
     closingText: project.script?.closing,
     editorial: project.editorial,
