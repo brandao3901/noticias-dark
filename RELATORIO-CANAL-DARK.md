@@ -1094,6 +1094,47 @@ Ou seja: o vídeo não é montagem de fotos — é **a fonte na tela**.
 - A **trilha de fundo** da referência não foi adicionada: você pediu sem música. Fica como fase opcional.
 - O modo documento **não substitui** o de fotos: é escolha por pauta.
 
+---
+
+## 22. Modo cartões: tipografia cinética na identidade da Brasa (implementado em 26/11/2026)
+
+Referência visual: Shorts de canal de notícias com **cartões tipográficos** sobre fundo escuro, cartão da matéria e faixa de fonte. A cópia é estrutural; a identidade é a da Brasa.
+
+### 22.1 Como o frame é montado (`src/server/news-card.ts`)
+
+1. Fundo `#0a0d12` com **brilho de brasa** (gradiente âmbar) no terço inferior.
+2. **Chip do canal** no topo esquerdo, âmbar — usa `CHANNEL_LABEL` sem o sufixo.
+3. **Bloco tipográfico** com até 4 elementos: `pill` âmbar (ex.: "SEGUNDO AGENDADOPODER.COM.BR"), linha fina cinza-azulada (editoria), **palavra gigante** branca (até 118 px) e `pill` de ação.
+4. **Cartão da matéria**: papel `#f7f5ef`, `rx 26`, crédito do veículo, título, **trecho marcado em âmbar** e corpo.
+5. **Faixa inferior**: barra preta 80%, borda âmbar, manchete em caixa alta e `FONTE · veículo · veículo`.
+
+Todo texto é **medido antes de desenhar** (Arial Bold ≈ 0,68 em/caractere) e a fonte é reduzida até caber — nada é cortado na borda.
+
+### 22.2 Beats e render
+
+- `buildSceneBeats()` (determinístico): `pill` = "SEGUNDO \<veículo\>", `line` = editoria, `word` = entidade detectada, `action` = abertura da segunda frase. Cena com mais de uma frase gera **2 beats** (o segundo é só o cartão ampliado).
+- Cada beat → **um segmento PNG** com duração `cena / beats`; cortes secos, sem avatar, sem tarja (o chip é a marca), sem Ken Burns.
+- Legenda do transcript em estilo `cards` (menor, acima da faixa inferior).
+- `render.json` grava `videoMode: 'cards'`.
+
+### 22.3 Contrato e UI
+
+- `videoMode: 'fotos' | 'documento' | 'cards'` no render e no `NarrationState`.
+- Seletor **Formato** no Estúdio e QC com as três opções.
+- `editorial` no payload vira a linha fina dos cartões.
+
+### 22.4 Validação
+
+- Render de 3 cenas / 17,6 s: **6 beats**, chip, cartão e faixa corretos.
+- Três correções feitas no caminho: chip sem truncar no meio da frase, legenda deixando de cobrir a faixa inferior (MarginV 40) e medição de largura recalibrada (0,62 → 0,68 + letter-spacing).
+
+### 22.5 Limites
+
+- Cartão **sintético** a partir do trecho do dossiê — não é captura do site.
+- A "ação" do pill é heurística (abertura da segunda frase); sem Gemini, pode sair genérica.
+- Sem trilha sonora nesta versão.
+
+
 
 
 ---

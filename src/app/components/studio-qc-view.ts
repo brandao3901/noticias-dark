@@ -420,6 +420,7 @@ import { NarrationVoicePicker } from './narration-voice-picker';
                     >
                       <option value="fotos">Fotos (Ken Burns)</option>
                       <option value="documento">Documento (print da fonte)</option>
+                      <option value="cards">Cartões (tipografia + matéria)</option>
                     </select>
                   </label>
                   <label class="inline-flex cursor-pointer items-center gap-2">
@@ -991,6 +992,7 @@ export class StudioQcView {
         },
         dynamics: pauta.narration.dynamics ?? 'alta',
         captions: pauta.narration.captions ?? 'karaoke',
+        editorial: pauta.editorial,
         videoMode: pauta.narration.videoMode ?? 'fotos',
         sources: (pauta.dossier?.sources ?? []).slice(0, 3).map((source) => ({
           title: source.title,

@@ -11,6 +11,7 @@ import { WEB_USER_AGENT } from './http';
 import { validateSafePublicUrl } from './ssrf-guard';
 import { retimeSubtitles, buildKaraokeAss } from './subtitles';
 import { renderDocumentPage } from './document-page';
+import { renderNewsCard, buildSceneBeats } from './news-card';
 
 const execFileAsync = promisify(execFile);
 
@@ -57,7 +58,7 @@ export interface RenderResult {
   ttsModel?: string;
   /** Auditoria de ritmo visual (vai para o render.json). */
   dynamics?: string;
-  videoMode?: 'fotos' | 'documento';
+  videoMode?: 'fotos' | 'documento' | 'cards';
   cuts?: number;
   avgShotSec?: number;
   firstCutSec?: number;
@@ -242,7 +243,7 @@ function buildVideoFilter(params: {
   includeLabel: boolean;
   subtitleFile: string;
   totalDuration: number;
-  compactCaptions?: boolean;
+  captionVariant?: 'default' | 'compact' | 'cards';
 }): string {
   const filters: string[] = [];
 
@@ -271,12 +272,19 @@ function buildVideoFilter(params: {
   if (params.subtitleFile.endsWith('.ass')) {
     filters.push('subtitles=legendas.ass');
   } else {
-    // libass dimensiona o SRT sobre PlayResY=288. No modo documento a legenda é
-    // menor e mais baixa: o texto do papel precisa dominar a tela.
-    const style = params.compactCaptions
-      ? 'Alignment=2,MarginV=6,FontSize=7,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'
-      : 'Alignment=2,MarginV=48,FontSize=12,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000';
-    filters.push(`subtitles=legendas.srt:force_style='${style}'`);
+    // libass dimensiona o SRT sobre PlayResY=288 (1 unidade = 6,67 px em 1920).
+    // - default: legenda grande de rodapé;
+    // - compact: papel branco na tela, legenda menor e colada embaixo;
+    // - cards:  precisa limpar a faixa inferior (180 px), então sobe.
+    const styles: Record<string, string> = {
+      default: 'Alignment=2,MarginV=48,FontSize=12',
+      compact: 'Alignment=2,MarginV=6,FontSize=7',
+      cards: 'Alignment=2,MarginV=40,FontSize=7',
+    };
+    const base = styles[params.captionVariant ?? 'default'] ?? styles['default'];
+    filters.push(
+      `subtitles=legendas.srt:force_style='${base},BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'`,
+    );
   }
 
   return filters.join(',');
@@ -401,7 +409,7 @@ export async function renderVerticalShortMp4(params: {
   audioBase64?: string;
   narration?: RenderNarrationOptions;
   /** 'fotos' (padrao): Ken Burns sobre midia. 'documento': pagina da fonte com rolagem. */
-  videoMode?: 'fotos' | 'documento';
+  videoMode?: 'fotos' | 'documento' | 'cards';
   /** Fontes do dossie; alimentam as paginas do modo documento. */
   sources?: RenderSourceInput[];
   /** 'alta' (padrao): cortes curtos, camera variada e transicoes. */
@@ -410,6 +418,8 @@ export async function renderVerticalShortMp4(params: {
   captions?: 'karaoke' | 'classica';
   /** Manchete grande nos primeiros 2 s (gancho). */
   headline?: string;
+  /** Editoria da pauta; vira a linha fina dos cartoes. */
+  editorial?: string;
   /** Pergunta de engajamento no card final. */
   closingText?: string;
   /** Progresso do render: etapa, percentual (0–99) e mensagem curta. */
@@ -474,6 +484,7 @@ export async function renderVerticalShortMp4(params: {
 
     const dynamicsHigh = params.dynamics !== 'normal';
     const documentMode = params.videoMode === 'documento' && (params.sources?.length ?? 0) > 0;
+    const cardsMode = params.videoMode === 'cards';
     const segmentFiles: string[] = [];
     let segIdx = 0;
     let totalDuration = 0;
@@ -513,6 +524,107 @@ export async function renderVerticalShortMp4(params: {
       const scene = params.scenes[sceneIndex];
       const sceneDur = sceneDurations[sceneIndex];
       totalDuration += sceneDur;
+
+      // Modo cartões: tipografia de impacto + cartão da matéria (sem avatar).
+      if (cardsMode) {
+        const source = params.sources?.length
+          ? params.sources[sceneIndex % params.sources.length]
+          : undefined;
+        const beats = buildSceneBeats({
+          narration: scene.narration ?? '',
+          editorial: params.editorial ?? 'Notícia',
+          domain: source?.domain,
+          entity: (scene as { detectedEntities?: string[] }).detectedEntities?.[0],
+        });
+        const beatDur = Math.max(1.2, sceneDur / Math.max(1, beats.length));
+        const domains = Array.from(
+          new Set((params.sources ?? []).map((item) => item.domain).filter(Boolean)),
+        ).slice(0, 2);
+        const sourcesLine = `FONTE · ${domains.join(' · ') || 'APURAÇÃO'}`;
+        const headline = (
+          params.headline ??
+          source?.title ??
+          params.scenes[0]?.narration ??
+          'NOTÍCIA'
+        )
+          .replace(/\s+/g, ' ')
+          .slice(0, 90);
+
+        for (let beatIndex = 0; beatIndex < beats.length; beatIndex++) {
+          const segName = `seg_${String(segIdx++).padStart(3, '0')}.mp4`;
+          const segPath = join(workDir, segName);
+
+          try {
+            const png = renderNewsCard({
+              channelLabel: channelLabel(),
+              beat: beats[beatIndex],
+              source,
+              headline,
+              sourcesLine,
+              focus: beatIndex === 0 ? 'type' : 'card',
+            });
+            const pngPath = join(workDir, `card_${segIdx}.png`);
+            await writeFile(pngPath, png);
+            await execFileAsync(
+              'ffmpeg',
+              [
+                '-y',
+                '-loop',
+                '1',
+                '-framerate',
+                '30',
+                '-t',
+                String(beatDur.toFixed(3)),
+                '-i',
+                pngPath,
+                '-an',
+                '-c:v',
+                'libx264',
+                '-preset',
+                'ultrafast',
+                '-crf',
+                '21',
+                '-pix_fmt',
+                'yuv420p',
+                segPath,
+              ],
+              { timeout: 60_000 },
+            );
+            sceneVisuals[sceneIndex] = true;
+          } catch {
+            await execFileAsync(
+              'ffmpeg',
+              [
+                '-y',
+                '-f',
+                'lavfi',
+                '-t',
+                String(beatDur.toFixed(3)),
+                '-i',
+                'color=c=#0a0d12:s=1080x1920:r=30',
+                '-an',
+                '-c:v',
+                'libx264',
+                '-preset',
+                'ultrafast',
+                '-crf',
+                '21',
+                segPath,
+              ],
+              { timeout: 30_000 },
+            );
+          }
+
+          if (segmentFiles.length === 0) firstCutSec = beatDur;
+          segmentFiles.push(segName);
+          params.onProgress?.(
+            'montagem',
+            44 + (segmentFiles.length / Math.max(1, totalSegments)) * 26,
+            `Cartão ${beatIndex + 1}/${beats.length} da cena ${sceneIndex + 1}…`,
+          );
+        }
+        continue;
+      }
 
       // Modo documento: a cena é a página da fonte com rolagem lenta.
       if (documentMode) {
@@ -764,7 +876,7 @@ export async function renderVerticalShortMp4(params: {
 
     // Legenda karaokê (palavra a palavra). O SRT/VTT continua no pacote e no
     // YouTube; o ASS é só o que aparece queimado no vídeo.
-    const captionMode = params.captions ?? (documentMode ? 'classica' : 'karaoke');
+    const captionMode = params.captions ?? (documentMode || cardsMode ? 'classica' : 'karaoke');
     let subtitleFile = 'legendas.srt';
     if (captionMode === 'karaoke') {
       const retimedForAss = retimeSubtitles(params.srtContent, plannedDurations, sceneDurations);
@@ -880,7 +992,7 @@ export async function renderVerticalShortMp4(params: {
 
     const buildFilterGraph = (includeLabel: boolean, includeAvatar: boolean): string => {
       const parts: string[] = [
-        `[0:v]${buildVideoFilter({ includeLabel, subtitleFile, totalDuration, compactCaptions: documentMode })}[vb0]`,
+        `[0:v]${buildVideoFilter({ includeLabel, subtitleFile, totalDuration, captionVariant: cardsMode ? 'cards' : documentMode ? 'compact' : 'default' })}[vb0]`,
       ];
       let last = 'vb0';
 
@@ -1008,7 +1120,7 @@ export async function renderVerticalShortMp4(params: {
 
     params.onProgress?.('render', 88, 'Renderizando o vídeo final…');
     try {
-      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent, true), {
+      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent && !cardsMode, true), {
         cwd: workDir,
         timeout: 180_000,
       });
@@ -1033,7 +1145,7 @@ export async function renderVerticalShortMp4(params: {
       ttsVoice: narrationTrack?.voiceUsed,
       ttsModel: narrationTrack?.ttsModel,
       dynamics: dynamicsHigh ? 'alta' : 'normal',
-      videoMode: documentMode ? 'documento' : 'fotos',
+      videoMode: cardsMode ? 'cards' : documentMode ? 'documento' : 'fotos',
       cuts: segmentFiles.length,
       avgShotSec: segmentFiles.length
         ? Number((totalDuration / segmentFiles.length).toFixed(2))

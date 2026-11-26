@@ -488,7 +488,8 @@ interface RenderSpec {
   captions?: 'karaoke' | 'classica';
   headline?: string;
   closingText?: string;
-  videoMode?: 'fotos' | 'documento';
+  editorial?: string;
+  videoMode?: 'fotos' | 'documento' | 'cards';
   sources?: RenderSourceInput[];
   artifacts: { manifestJson: string; scriptText: string; qcReport?: unknown };
 }
@@ -579,7 +580,10 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
   const closingText =
     typeof body?.['closingText'] === 'string' ? String(body['closingText']) : undefined;
 
-  const videoMode = body?.['videoMode'] === 'documento' ? 'documento' : 'fotos';
+  const rawVideoMode = body?.['videoMode'];
+  const editorial = typeof body?.['editorial'] === 'string' ? String(body['editorial']).slice(0, 40) : undefined;
+  const videoMode: 'fotos' | 'documento' | 'cards' =
+    rawVideoMode === 'documento' ? 'documento' : rawVideoMode === 'cards' ? 'cards' : 'fotos';
   const rawSources = Array.isArray(body?.['sources']) ? (body['sources'] as unknown[]) : [];
   const sources: RenderSourceInput[] = rawSources
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
@@ -612,6 +616,7 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
       captions,
       headline,
       closingText,
+      editorial,
       videoMode,
       sources,
       artifacts,
@@ -663,6 +668,7 @@ async function executeRender(
     captions: spec.captions,
     headline: spec.headline,
     closingText: spec.closingText,
+    editorial: spec.editorial,
     videoMode: spec.videoMode,
     sources: spec.sources,
     onProgress: report,
@@ -799,6 +805,7 @@ app.post('/api/export/render-mp4', async (req, res) => {
         captions: parsed.spec.captions,
         headline: parsed.spec.headline,
         closingText: parsed.spec.closingText,
+        editorial: parsed.spec.editorial,
         videoMode: parsed.spec.videoMode,
         sources: parsed.spec.sources,
       });
