@@ -412,6 +412,17 @@ import { NarrationVoicePicker } from './narration-voice-picker';
 
                 <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
                   <label class="inline-flex cursor-pointer items-center gap-2">
+                    <span>Formato</span>
+                    <select
+                      [value]="pauta.narration.videoMode ?? 'fotos'"
+                      (change)="onVideoMode($event)"
+                      class="rounded border border-white/15 bg-[#111620] px-2 py-1 text-[11px] text-slate-200"
+                    >
+                      <option value="fotos">Fotos (Ken Burns)</option>
+                      <option value="documento">Documento (print da fonte)</option>
+                    </select>
+                  </label>
+                  <label class="inline-flex cursor-pointer items-center gap-2">
                     <input
                       type="checkbox"
                       [checked]="dynamicsAlta()"
@@ -694,6 +705,15 @@ export class StudioQcView {
     });
   }
 
+  onVideoMode(event: Event): void {
+    const pauta = this.store.activePauta();
+    if (!pauta) return;
+    const value = (event.target as HTMLSelectElement).value;
+    this.store.updateNarrationState(pauta.id, {
+      videoMode: value === 'documento' ? 'documento' : 'fotos',
+    });
+  }
+
   readonly autoNarration = signal(true);
   readonly avatarInVideo = signal(true);
 
@@ -971,6 +991,14 @@ export class StudioQcView {
         },
         dynamics: pauta.narration.dynamics ?? 'alta',
         captions: pauta.narration.captions ?? 'karaoke',
+        videoMode: pauta.narration.videoMode ?? 'fotos',
+        sources: (pauta.dossier?.sources ?? []).slice(0, 3).map((source) => ({
+          title: source.title,
+          domain: source.domain,
+          url: source.url,
+          excerpt: source.excerpt,
+          publishedAt: source.publishedAt,
+        })),
         // Gancho na tela nos 2 primeiros segundos: o hook do roteiro.
         headline: (pauta.script?.hook || pauta.script?.suggestedTitle || '').trim().slice(0, 140),
         closingText: (pauta.script?.closing || '').trim() || undefined,

@@ -56,6 +56,7 @@ export interface RenderArtifactsInput {
   cuts?: number;
   avgShotSec?: number;
   firstCutSec?: number;
+  videoMode?: string;
 }
 
 export interface RenderArtifactsResult {
@@ -198,6 +199,7 @@ export async function saveRenderArtifacts(
         cuts: input.cuts ?? null,
         avgShotSec: input.avgShotSec ?? null,
         firstCutSec: input.firstCutSec ?? null,
+        videoMode: input.videoMode ?? null,
         renderedAt: new Date().toISOString(),
       },
       null,

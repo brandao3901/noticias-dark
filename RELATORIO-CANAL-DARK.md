@@ -1039,6 +1039,62 @@ Motivo: os dois primeiros Shorts ficaram com **25–28 s de visualização médi
 - **Card vs. legenda**: o card de fechamento teve de ir para o topo (10%) porque a legenda ocupa a faixa inferior; o CTA passou a ser a última linha do mesmo texto para não sobrepor.
 - `drawbox` não aceita `t` na largura: a barra de progresso é desenhada em passos com `enable`.
 
+---
+
+## 21. Modo documento: o formato "print da fonte" (implementado em 26/11/2026)
+
+Referência analisada: um Short de 38 s do canal **Burro News**. Medições do arquivo:
+
+| Característica | Referência |
+|---|---|
+| Cortes | **3** (shots de 7 a 19 s) |
+| Visual | páginas/documentos com texto denso, rolagem contínua |
+| Pessoa em cena | não (pele ≈ 2,7%) |
+| Legenda | bloco **pequeno** no rodapé |
+| Áudio | RMS **−17,6 dB**, pico −1,0 dB, com trilha de fundo |
+
+Ou seja: o vídeo não é montagem de fotos — é **a fonte na tela**.
+
+### 21.1 O que foi implementado
+
+**`src/server/document-page.ts`** — "página" sintética em SVG → PNG (resvg):
+- cabeçalho com o **veículo** em âmbar (domínio longo vai truncado; a data migra para o rodapé);
+- manchete em Arial Bold;
+- parágrafos do trecho da matéria, com **trecho destacado** (marca-texto âmbar);
+- **pull quote** com barra âmbar preenchendo a sobra da folha;
+- rodapé com URL e data;
+- altura dinâmica (texto longo → página mais alta → rolagem).
+
+**`export-video.ts`** — modo `videoMode: 'documento'`:
+- cada cena vira uma **página com rolagem vertical** (`crop` com `y` animado por `t` — ~40 px/s);
+- sem fotos, sem avatar, **sem tarja** (o cabeçalho da página já identifica o veículo);
+- legenda **compacta** (FontSize 7, MarginV 22) no rodapé;
+- cortes só na troca de documento.
+
+**Áudio** — `loudnorm=I=-14:TP=-1.5:LRA=11` no passe final (padrão de Shorts).
+
+**Contrato** — `RenderRequest.videoMode` e `sources[]`; `NarrationState.videoMode`; `render.json` grava `videoMode`.
+
+**UI** — seletor **Formato: Fotos / Documento** no Estúdio e QC.
+
+### 21.2 Medições do render de validação (4 cenas, 2 fontes)
+
+| Métrica | Referência | Nosso modo documento |
+|---|---|---|
+| Duração | 38,3 s | 22,8 s (roteiro de teste) |
+| Cortes | 3 | **3** |
+| Rolagem | contínua | **confirmada** (frames de 8 s e 14 s diferentes) |
+| Áudio | −17,6 dB RMS / −1,0 pico | **−13,8 dB / −1,4** |
+| Pessoa em cena | não | não |
+
+### 21.3 Limites
+
+- O print é **sintético**, não uma captura do site: capturar a página real exigiria navegador headless, lida com paywall e layout que muda. O efeito visual é o mesmo e o texto vem do dossiê (fonte citada).
+- A página usa o `excerpt` do RSS; artigos com trecho muito curto geram folha mais vazia (o pull quote mitiga).
+- A **trilha de fundo** da referência não foi adicionada: você pediu sem música. Fica como fase opcional.
+- O modo documento **não substitui** o de fotos: é escolha por pauta.
+
+
 
 ---
 

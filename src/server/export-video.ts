@@ -10,6 +10,7 @@ import { buildJawEnvelope, buildNarrationTrack } from './narration';
 import { WEB_USER_AGENT } from './http';
 import { validateSafePublicUrl } from './ssrf-guard';
 import { retimeSubtitles, buildKaraokeAss } from './subtitles';
+import { renderDocumentPage } from './document-page';
 
 const execFileAsync = promisify(execFile);
 
@@ -56,6 +57,7 @@ export interface RenderResult {
   ttsModel?: string;
   /** Auditoria de ritmo visual (vai para o render.json). */
   dynamics?: string;
+  videoMode?: 'fotos' | 'documento';
   cuts?: number;
   avgShotSec?: number;
   firstCutSec?: number;
@@ -240,6 +242,7 @@ function buildVideoFilter(params: {
   includeLabel: boolean;
   subtitleFile: string;
   totalDuration: number;
+  compactCaptions?: boolean;
 }): string {
   const filters: string[] = [];
 
@@ -268,12 +271,12 @@ function buildVideoFilter(params: {
   if (params.subtitleFile.endsWith('.ass')) {
     filters.push('subtitles=legendas.ass');
   } else {
-    filters.push(
-      // libass dimensiona o SRT sobre PlayResY=288: FontSize 12 e MarginV 48
-      // resultam em ~80px e ~320px de margem no video 1080x1920, acima da barra
-      // de interface do YouTube Shorts.
-      "subtitles=legendas.srt:force_style='Alignment=2,MarginV=48,FontSize=12,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'",
-    );
+    // libass dimensiona o SRT sobre PlayResY=288. No modo documento a legenda é
+    // menor e mais baixa: o texto do papel precisa dominar a tela.
+    const style = params.compactCaptions
+      ? 'Alignment=2,MarginV=22,FontSize=7,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000'
+      : 'Alignment=2,MarginV=48,FontSize=12,BorderStyle=4,Outline=1,Shadow=0,BackColour=&H99000000';
+    filters.push(`subtitles=legendas.srt:force_style='${style}'`);
   }
 
   return filters.join(',');
@@ -383,11 +386,24 @@ async function downloadSafeMediaToFile(
   return null;
 }
 
+export interface RenderSourceInput {
+  id?: string;
+  title: string;
+  domain: string;
+  url: string;
+  excerpt: string;
+  publishedAt?: string;
+}
+
 export async function renderVerticalShortMp4(params: {
   scenes: RenderSceneInput[];
   srtContent: string;
   audioBase64?: string;
   narration?: RenderNarrationOptions;
+  /** 'fotos' (padrao): Ken Burns sobre midia. 'documento': pagina da fonte com rolagem. */
+  videoMode?: 'fotos' | 'documento';
+  /** Fontes do dossie; alimentam as paginas do modo documento. */
+  sources?: RenderSourceInput[];
   /** 'alta' (padrao): cortes curtos, camera variada e transicoes. */
   dynamics?: 'alta' | 'normal';
   /** Legenda queimada: karaoke (palavra a palavra) ou classica. */
@@ -457,6 +473,7 @@ export async function renderVerticalShortMp4(params: {
     }
 
     const dynamicsHigh = params.dynamics !== 'normal';
+    const documentMode = params.videoMode === 'documento' && (params.sources?.length ?? 0) > 0;
     const segmentFiles: string[] = [];
     let segIdx = 0;
     let totalDuration = 0;
@@ -465,10 +482,110 @@ export async function renderVerticalShortMp4(params: {
     /** Segundo em que o primeiro corte acontece (gancho precisa ser ≤ 1,5 s). */
     let firstCutSec = 0;
 
+    // Páginas do modo documento: geradas uma vez e reaproveitadas.
+    const pageCache = new Map<number, { path: string; height: number }>();
+    const ensurePage = async (index: number): Promise<{ path: string; height: number } | null> => {
+      const cached = pageCache.get(index);
+      if (cached) return cached;
+
+      const source = params.sources?.[index % (params.sources?.length ?? 1)];
+      if (!source) return null;
+
+      try {
+        const page = renderDocumentPage({
+          domain: source.domain,
+          title: source.title,
+          excerpt: source.excerpt,
+          url: source.url,
+          publishedAt: source.publishedAt,
+        });
+        const path = join(workDir, `pagina_${index}.png`);
+        await writeFile(path, page.png);
+        const entry = { path, height: page.height };
+        pageCache.set(index, entry);
+        return entry;
+      } catch {
+        return null;
+      }
+    };
+
     for (let sceneIndex = 0; sceneIndex < plannedDurations.length; sceneIndex++) {
       const scene = params.scenes[sceneIndex];
       const sceneDur = sceneDurations[sceneIndex];
       totalDuration += sceneDur;
+
+      // Modo documento: a cena é a página da fonte com rolagem lenta.
+      if (documentMode) {
+        const page = await ensurePage(sceneIndex);
+        const segName = `seg_${String(segIdx++).padStart(3, '0')}.mp4`;
+        const segPath = join(workDir, segName);
+
+        if (page) {
+          const scrolls = page.height > 1920;
+          const filter = scrolls
+            ? `scale=1080:-1,crop=1080:1920:0:'(ih-1920)*min(t/${sceneDur.toFixed(3)},1)'`
+            : 'scale=1080:-1,pad=1080:1920:0:0:color=0x0a0d12';
+          await execFileAsync(
+            'ffmpeg',
+            [
+              '-y',
+              '-loop',
+              '1',
+              '-framerate',
+              '30',
+              '-t',
+              String(sceneDur),
+              '-i',
+              page.path,
+              '-vf',
+              filter,
+              '-an',
+              '-c:v',
+              'libx264',
+              '-preset',
+              'ultrafast',
+              '-crf',
+              '21',
+              '-pix_fmt',
+              'yuv420p',
+              segPath,
+            ],
+            { timeout: 60_000 },
+          );
+          sceneVisuals[sceneIndex] = true;
+        } else {
+          await execFileAsync(
+            'ffmpeg',
+            [
+              '-y',
+              '-f',
+              'lavfi',
+              '-t',
+              String(sceneDur),
+              '-i',
+              'color=c=#0a0d12:s=1080x1920:r=30',
+              '-an',
+              '-c:v',
+              'libx264',
+              '-preset',
+              'ultrafast',
+              '-crf',
+              '21',
+              segPath,
+            ],
+            { timeout: 30_000 },
+          );
+        }
+
+        if (segmentFiles.length === 0) firstCutSec = sceneDur;
+        segmentFiles.push(segName);
+        params.onProgress?.(
+          'montagem',
+          44 + (segmentFiles.length / Math.max(1, plannedDurations.length)) * 26,
+          `Página ${sceneIndex + 1} de ${plannedDurations.length}…`,
+        );
+        continue;
+      }
 
       const items = scene.mediaItems.slice(0, 4);
       // Shots de ~2,8 s mesmo com uma única foto: quando falta mídia, o mesmo
@@ -647,7 +764,7 @@ export async function renderVerticalShortMp4(params: {
 
     // Legenda karaokê (palavra a palavra). O SRT/VTT continua no pacote e no
     // YouTube; o ASS é só o que aparece queimado no vídeo.
-    const captionMode = params.captions ?? 'karaoke';
+    const captionMode = params.captions ?? (documentMode ? 'classica' : 'karaoke');
     let subtitleFile = 'legendas.srt';
     if (captionMode === 'karaoke') {
       const retimedForAss = retimeSubtitles(params.srtContent, plannedDurations, sceneDurations);
@@ -763,7 +880,7 @@ export async function renderVerticalShortMp4(params: {
 
     const buildFilterGraph = (includeLabel: boolean, includeAvatar: boolean): string => {
       const parts: string[] = [
-        `[0:v]${buildVideoFilter({ includeLabel, subtitleFile, totalDuration })}[vb0]`,
+        `[0:v]${buildVideoFilter({ includeLabel, subtitleFile, totalDuration, compactCaptions: documentMode })}[vb0]`,
       ];
       let last = 'vb0';
 
@@ -865,6 +982,10 @@ export async function renderVerticalShortMp4(params: {
       '[vout]',
       '-map',
       '1:a',
+      // Padrão de Shorts: -14 LUFS e teto de -1,5 dB. Sem isso o vídeo fica
+      // 7-12 dB abaixo do que o feed entrega e parece "baixo".
+      '-af',
+      'loudnorm=I=-14:TP=-1.5:LRA=11',
       '-c:v',
       'libx264',
       '-preset',
@@ -887,7 +1008,7 @@ export async function renderVerticalShortMp4(params: {
 
     params.onProgress?.('render', 88, 'Renderizando o vídeo final…');
     try {
-      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent, true), {
+      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent && !documentMode, true), {
         cwd: workDir,
         timeout: 180_000,
       });
@@ -912,6 +1033,7 @@ export async function renderVerticalShortMp4(params: {
       ttsVoice: narrationTrack?.voiceUsed,
       ttsModel: narrationTrack?.ttsModel,
       dynamics: dynamicsHigh ? 'alta' : 'normal',
+      videoMode: documentMode ? 'documento' : 'fotos',
       cuts: segmentFiles.length,
       avgShotSec: segmentFiles.length
         ? Number((totalDuration / segmentFiles.length).toFixed(2))

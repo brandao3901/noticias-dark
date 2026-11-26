@@ -36,7 +36,13 @@ import {
   searchInternetArchiveMedia,
   searchWikimediaMedia,
 } from './server/research';
-import { renderVerticalShortMp4, channelLabel, type RenderNarrationOptions, type RenderSceneInput } from './server/export-video';
+import {
+  renderVerticalShortMp4,
+  channelLabel,
+  type RenderNarrationOptions,
+  type RenderSceneInput,
+  type RenderSourceInput,
+} from './server/export-video';
 import {
   cancelJob,
   enqueueJob,
@@ -482,6 +488,8 @@ interface RenderSpec {
   captions?: 'karaoke' | 'classica';
   headline?: string;
   closingText?: string;
+  videoMode?: 'fotos' | 'documento';
+  sources?: RenderSourceInput[];
   artifacts: { manifestJson: string; scriptText: string; qcReport?: unknown };
 }
 
@@ -571,6 +579,20 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
   const closingText =
     typeof body?.['closingText'] === 'string' ? String(body['closingText']) : undefined;
 
+  const videoMode = body?.['videoMode'] === 'documento' ? 'documento' : 'fotos';
+  const rawSources = Array.isArray(body?.['sources']) ? (body['sources'] as unknown[]) : [];
+  const sources: RenderSourceInput[] = rawSources
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .slice(0, 3)
+    .map((item) => ({
+      title: String(item['title'] ?? '').slice(0, 200),
+      domain: String(item['domain'] ?? '').slice(0, 80),
+      url: String(item['url'] ?? '').slice(0, 300),
+      excerpt: String(item['excerpt'] ?? '').slice(0, 1200),
+      publishedAt: typeof item['publishedAt'] === 'string' ? item['publishedAt'] : undefined,
+    }))
+    .filter((item) => item.title.trim().length > 0);
+
   const artifactsBody = body?.['artifacts'] as Record<string, unknown> | undefined;
   const artifacts = {
     manifestJson: typeof artifactsBody?.['manifestJson'] === 'string' ? String(artifactsBody['manifestJson']) : '{}',
@@ -590,6 +612,8 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
       captions,
       headline,
       closingText,
+      videoMode,
+      sources,
       artifacts,
     },
   };
@@ -639,6 +663,8 @@ async function executeRender(
     captions: spec.captions,
     headline: spec.headline,
     closingText: spec.closingText,
+    videoMode: spec.videoMode,
+    sources: spec.sources,
     onProgress: report,
   });
 
@@ -662,6 +688,7 @@ async function executeRender(
     cuts: result.cuts,
     avgShotSec: result.avgShotSec,
     firstCutSec: result.firstCutSec,
+    videoMode: result.videoMode ?? spec.videoMode ?? 'fotos',
   });
 
   return {
@@ -772,6 +799,8 @@ app.post('/api/export/render-mp4', async (req, res) => {
         captions: parsed.spec.captions,
         headline: parsed.spec.headline,
         closingText: parsed.spec.closingText,
+        videoMode: parsed.spec.videoMode,
+        sources: parsed.spec.sources,
       });
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Content-Disposition', 'attachment; filename="canal-dark-9x16.mp4"');

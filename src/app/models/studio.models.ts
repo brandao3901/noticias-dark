@@ -182,6 +182,8 @@ export interface NarrationState {
   dynamics?: 'alta' | 'normal';
   /** Estilo da legenda queimada no video. */
   captions?: 'karaoke' | 'classica';
+  /** Formato visual: fotos (Ken Burns) ou documento (pagina da fonte com rolagem). */
+  videoMode?: 'fotos' | 'documento';
   rate: number;
   audioFileName?: string;
   audioDurationSec?: number;
