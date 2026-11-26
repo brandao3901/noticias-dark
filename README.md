@@ -58,6 +58,10 @@ Abre em **http://localhost:3000** com hot reload. Para expor só na máquina loc
 npx ng serve --host 127.0.0.1 --port 3000
 ```
 
+**No Windows, sem terminal:** dê duplo clique em **`iniciar.cmd`** (desenvolvimento) ou
+**`iniciar-producao.cmd`** (compila e serve). Os dois detectam se o servidor já está no ar e, nesse caso,
+apenas abrem o navegador.
+
 ## Iniciar em produção (build servido pelo Express)
 
 ```bash
