@@ -44,7 +44,9 @@ npm run render -- <pautaId> --formato cartoes --voz blend --abrir
 
 - `--formato fotos|documento|cartoes`, `--voz blend|pm_alex|pf_dora|pm_santa|Kore`, `--motor kokoro|gemini|edge`
 - O CLI sobe o servidor de produção sozinho se a porta estiver livre, mostra o progresso no terminal e imprime o caminho do MP4.
-- No Windows: duplo clique em **`render.bat`** (menu com as pautas e o formato).
+- No Windows: duplo clique em **`render.bat`** (menu com as pautas e o formato) ou arraste/usar `render.bat <id> --formato cartoes`.
+- O CLI **sobe um servidor temporário** e o encerra ao terminar; se já houver um servidor no ar (janela do `CanalDark.bat`), ele só reaproveita.
+- Parar um servidor manual: `npm run cli -- stop`.
 
 ## Interface como app
 

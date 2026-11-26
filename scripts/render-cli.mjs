@@ -99,7 +99,10 @@ function buildIfNeeded() {
 }
 
 async function ensureServer() {
-  if (await serverOnline()) return { started: false };
+  if (await serverOnline()) {
+    console.log(paint('dim', '› usando o servidor que já está em ' + BASE));
+    return { started: false };
+  }
 
   await buildIfNeeded();
   console.log(paint('dim', `› subindo o servidor em ${BASE}…`));
@@ -110,11 +113,12 @@ async function ensureServer() {
     stdio: 'ignore',
     detached: false,
   });
-  child.unref?.();
-
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await sleep(500);
-    if (await serverOnline()) return { started: true, child };
+    if (await serverOnline()) {
+      console.log(paint('dim', '› servidor temporário no ar (encerra ao terminar o render)'));
+      return { started: true, child };
+    }
   }
   throw new Error('o servidor não respondeu em 30 s (rode "npm start" manualmente).');
 }
@@ -172,7 +176,10 @@ async function renderizar(args) {
   const voz = args.voz ?? 'blend';
   const motor = args.motor ?? (voz && voz !== 'Kore' && !/^pt-BR-/.test(voz) ? 'kokoro' : undefined);
 
-  await ensureServer();
+  if (!(await serverOnline())) {
+    temporaryServer = (await ensureServer()).child ?? null;
+  }
+  console.log(paint('dim', '› servidor pronto'));
 
   const project = await api(`/api/projects/${pautaId}`);
   console.log('');
@@ -251,6 +258,41 @@ Exemplo:
 `);
 }
 
+let temporaryServer = null;
+
+function stopTemporaryServer() {
+  if (!temporaryServer) return;
+  try {
+    temporaryServer.kill();
+  } catch {
+    // já encerrado
+  }
+  temporaryServer = null;
+}
+
+/** Encerra o processo que estiver escutando na porta (uso: npm run cli -- stop). */
+function stopServerOnPort() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve(false);
+      return;
+    }
+    const netstat = spawn('cmd', ['/c', 'netstat -ano | findstr ":' + PORT + '" | findstr LISTENING']);
+    let out = '';
+    netstat.stdout.on('data', (chunk) => {
+      out += String(chunk);
+    });
+    netstat.on('exit', () => {
+      const match = out.match(/\s(\d+)\s*$/m);
+      if (!match) {
+        resolve(false);
+        return;
+      }
+      spawn('taskkill', ['/PID', match[1], '/F'], { stdio: 'ignore' }).on('exit', () => resolve(true));
+    });
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0];
@@ -268,12 +310,19 @@ async function main() {
       await renderizar(args);
       return;
     }
+    if (command === 'stop' || command === 'parar') {
+      const stopped = await stopServerOnPort();
+      console.log(stopped ? paint('green', '✔ servidor encerrado') : 'nenhum servidor rodando na porta ' + PORT);
+      return;
+    }
     help();
     process.exitCode = 1;
   } catch (error) {
     console.error('');
     console.error(paint('red', `✖ ${error instanceof Error ? error.message : String(error)}`));
     process.exitCode = 1;
+  } finally {
+    stopTemporaryServer();
   }
 }
 
