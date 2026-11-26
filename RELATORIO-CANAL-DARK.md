@@ -1134,6 +1134,50 @@ Todo texto é **medido antes de desenhar** (Arial Bold ≈ 0,68 em/caractere) e 
 - A "ação" do pill é heurística (abertura da segunda frase); sem Gemini, pode sair genérica.
 - Sem trilha sonora nesta versão.
 
+---
+
+## 23. Voz offline com Kokoro + console Streamlit (implementado em 26/11/2026)
+
+Pedido: voz própria, offline, sem CUDA/PyTorch, com mistura de vozes, e uma interface local de 3 abas.
+
+### 23.1 Ambiente verificado
+
+| Item | Resultado |
+|---|---|
+| Python | 3.12.10 · pip 25.0.1 |
+| `kokoro-onnx` | **0.6.1** (+ `onnxruntime` 1.32, `phonemizer`, `espeakng-loader`) |
+| Modelos | `kokoro-v1.0.onnx` (310 MB) + `voices-v1.0.bin` (27 MB) na raiz |
+| espeak-ng | resolvido pelo `espeakng-loader` (não precisou instalar binário) |
+| Desempenho | **2,8 s** para 5,8 s de fala (~2× tempo real em CPU Ryzen) |
+| Vozes pt-BR | `pm_alex`, `pf_dora`, `pm_santa` |
+
+### 23.2 Como ficou
+
+**Python** (`python/`): `voices.py` (mistura de vetores + config), `tts.py` (CLI texto→WAV), `voice_studio.py` (prévia/salvar), `download_models.py`, `smoke_test.py`.
+
+**Node**: `src/server/kokoro.ts` spawna o CLI (processo separado, não prende o Express), resolve a raiz do projeto de forma robusta (o SSR pode rodar com cwd diferente) e devolve WAV 24 kHz que o pipeline reamostra para 16 kHz — igual aos outros motores.
+
+**Motor**: `TtsEngine = 'kokoro' | 'gemini' | 'edge'`. Kokoro é o padrão quando os modelos existem (`TTS_ENGINE=kokoro`); se o Python falhar, cai no Edge sem deixar cena muda — e o motivo fica em `ttsFallback`.
+
+**Identidade da voz**: mistura é média ponderada dos vetores de estilo (510×1×256). 70% `pm_alex` + 30% `pf_dora` → `voz_canal.npy`; preferências em `config.json`. O vetor misto fica 70% mais próximo da voz A (distância 6,4 contra 15,0), confirmando a matemática.
+
+**Console** (`studio_app.py`, Streamlit em **http://localhost:8501**):
+- **Gerar vídeo** — lista pautas, edita a narração de cada cena, salva e dispara `POST /api/studio/render/:id` (endpoint novo: monta cenas, SRT e opções do `project.json`), com barra de progresso, player e download.
+- **Estúdio de voz** — duas vozes, slider de mistura e velocidade, frase de teste com prévia imediata, e botão para salvar a voz padrão.
+- **Histórico** — vídeos renderizados com player/download e configuração da URL da API.
+
+### 23.3 Prova de execução
+
+- `smoke_test.py`: 5,78 s de áudio em 2,8 s (pt-BR, mistura 70/30).
+- Render real pelo console: `engine: kokoro`, `voice: blend`, 13,03 s, áudio **−15,2 dB RMS / −1,4 dB pico**, **0 pausas ≥0,35 s**.
+
+### 23.4 Limites
+
+- Modelos somam ~354 MB e ficam **fora do git** (`*.onnx`, `*.bin`, `voz_canal.npy`).
+- O console é uma **casca**: o render, os formatos e a publicação continuam no app Angular/Node.
+- Kokoro não tem controle de estilo (âncora/urgente); o `style` do Gemini é ignorado nesse motor.
+
+
 
 
 

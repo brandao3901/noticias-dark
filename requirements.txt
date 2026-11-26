@@ -1,0 +1,6 @@
+# Dependências Python do Canal Dark (Kokoro TTS em CPU + console Streamlit).
+# Instale com: pip install -r requirements.txt
+kokoro-onnx==0.6.1
+soundfile==0.14.0
+numpy>=2.0
+streamlit>=1.40

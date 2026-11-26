@@ -1,0 +1,19 @@
+{
+  "voice": {
+    "engine": "kokoro",
+    "a": "pm_alex",
+    "b": "pf_dora",
+    "mix": 0.7,
+    "speed": 1.0,
+    "lang": "pt-br",
+    "file": "voz_canal.npy"
+  },
+  "paths": {
+    "models": "kokoro-v1.0.onnx",
+    "voices": "voices-v1.0.bin",
+    "projects": "projects"
+  },
+  "api": {
+    "node": "http://127.0.0.1:3000"
+  }
+}

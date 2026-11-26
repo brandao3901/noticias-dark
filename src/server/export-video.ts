@@ -34,7 +34,7 @@ export interface RenderNarrationOptions {
   /** Quando true e nao ha audio importado, a fala e sintetizada no servidor. */
   enabled: boolean;
   /** Motor de voz: Gemini TTS (padrao) ou Edge neural (reserva). */
-  engine?: 'gemini' | 'edge';
+  engine?: 'kokoro' | 'gemini' | 'edge';
   voice?: string;
   /** Preset de estilo do Gemini TTS (ancora, explicativo, urgente, leve, neutro). */
   style?: string;
@@ -56,6 +56,8 @@ export interface RenderResult {
   ttsEngine?: string;
   ttsVoice?: string;
   ttsModel?: string;
+  /** Motivo do fallback de voz, quando houve. */
+  ttsFallback?: string;
   /** Auditoria de ritmo visual (vai para o render.json). */
   dynamics?: string;
   videoMode?: 'fotos' | 'documento' | 'cards';
@@ -1144,6 +1146,7 @@ export async function renderVerticalShortMp4(params: {
       ttsEngine: narrationTrack?.engineUsed,
       ttsVoice: narrationTrack?.voiceUsed,
       ttsModel: narrationTrack?.ttsModel,
+      ttsFallback: narrationTrack?.fallbackReason,
       dynamics: dynamicsHigh ? 'alta' : 'normal',
       videoMode: cardsMode ? 'cards' : documentMode ? 'documento' : 'fotos',
       cuts: segmentFiles.length,

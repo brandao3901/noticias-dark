@@ -22,6 +22,7 @@ import {
 } from './server/gemini';
 import {
   DEFAULT_NARRATION_STYLE,
+  KOKORO_VOICES,
   NARRATION_STYLES,
   TTS_VOICES,
   defaultTtsEngine,
@@ -67,6 +68,7 @@ import {
   type PublishRequest,
 } from './server/publish-service';
 import { checkYoutubeQuota } from './server/publish-quota';
+import { kokoroModelsReady, readKokoroConfig } from './server/kokoro';
 import { instagramStatus } from './server/instagram';
 import { tiktokStatus } from './server/tiktok';
 import {
@@ -129,10 +131,16 @@ const angularApp = new AngularNodeAppEngine({
 app.use(express.json({ limit: '25mb' }));
 
 // Status de configuração sem expor segredos
-app.get('/api/config/status', (_req, res) => {
+app.get('/api/config/status', async (_req, res) => {
+  const kokoroVoice = await readKokoroConfig();
   res.json({
     ...getGeminiStatus(),
     channelLabel: channelLabel(),
+    kokoro: {
+      modelsReady: kokoroModelsReady(),
+      voice: kokoroVoice,
+      voices: KOKORO_VOICES,
+    },
     tts: {
       ...geminiTtsStatus(),
       defaultEngine: defaultTtsEngine(),
@@ -543,11 +551,12 @@ function parseRenderRequest(body: Record<string, unknown> | undefined): {
     narrationBody && typeof narrationBody === 'object'
       ? {
           enabled: (narrationBody as Record<string, unknown>)['enabled'] === true,
-          engine:
-            (narrationBody as Record<string, unknown>)['engine'] === 'gemini' ||
-            (narrationBody as Record<string, unknown>)['engine'] === 'edge'
-              ? ((narrationBody as Record<string, unknown>)['engine'] as 'gemini' | 'edge')
-              : undefined,
+          engine: (() => {
+            const rawEngine = (narrationBody as Record<string, unknown>)['engine'];
+            return rawEngine === 'kokoro' || rawEngine === 'gemini' || rawEngine === 'edge'
+              ? (rawEngine as 'kokoro' | 'gemini' | 'edge')
+              : undefined;
+          })(),
           voice:
             typeof (narrationBody as Record<string, unknown>)['voice'] === 'string'
               ? String((narrationBody as Record<string, unknown>)['voice'])
@@ -708,6 +717,7 @@ async function executeRender(
     ttsEngine: result.ttsEngine,
     ttsVoice: result.ttsVoice,
     ttsModel: result.ttsModel,
+    ttsFallback: result.ttsFallback,
   };
 }
 
@@ -1353,6 +1363,109 @@ startScheduler({
       break;
     }
   },
+});
+
+// ---------------------------------------------------------------------------
+// Console (Streamlit): renderiza direto de uma pauta salva
+// ---------------------------------------------------------------------------
+
+/** SRT simples: uma cue por cena, na duração planejada. */
+function buildSrtFromScenes(
+  scenes: Array<{ durationSec?: number; narration?: string }>,
+): string {
+  const fmt = (value: number): string => {
+    const h = String(Math.floor(value / 3600)).padStart(2, '0');
+    const m = String(Math.floor((value % 3600) / 60)).padStart(2, '0');
+    const s = String(Math.floor(value % 60)).padStart(2, '0');
+    const ms = String(Math.round((value - Math.floor(value)) * 1000)).padStart(3, '0');
+    return `${h}:${m}:${s},${ms}`;
+  };
+
+  let cursor = 0;
+  const blocks: string[] = [];
+  scenes.forEach((scene, index) => {
+    const duration = Math.max(1, Number(scene.durationSec) || 6);
+    const text = (scene.narration ?? '').trim();
+    if (text) {
+      blocks.push(`${index + 1}\n${fmt(cursor)} --> ${fmt(cursor + duration - 0.2)}\n${text}\n`);
+    }
+    cursor += duration;
+  });
+  return `${blocks.join('\n')}\n`;
+}
+
+app.post('/api/studio/render/:id', async (req, res) => {
+  const pautaId = sanitizeProjectId(req.params['id'] ?? '');
+  if (!pautaId) {
+    res.status(400).json({ error: 'Identificador de pauta inválido.' });
+    return;
+  }
+
+  const project = await readProject(pautaId);
+  const scriptScenes = project?.script?.scenes ?? [];
+  if (!project || scriptScenes.length === 0) {
+    res.status(409).json({ error: 'Pauta sem roteiro salvo no disco.' });
+    return;
+  }
+
+  // Aprovada -> pacote final; caso contrário, prévia (não passa pelo gate).
+  const isApproved = project.stage === 'APPROVED';
+  const scenes: RenderSceneInput[] = scriptScenes.slice(0, 20).map((scene) => ({
+    durationSec: scene.durationSec,
+    narration: scene.narration,
+    avatarMode: scene.avatarMode,
+    avatarExpression: scene.avatarExpression,
+    mediaItems: (scene.mediaAssets ?? (scene.mediaAsset ? [scene.mediaAsset] : []))
+      .slice(0, 4)
+      .map((media) => ({
+        kind: media.kind === 'video' ? ('video' as const) : ('image' as const),
+        mediaUrl: media.mediaUrl,
+        thumbUrl: media.thumbUrl,
+      })),
+  }));
+
+  const spec: RenderSpec = {
+    pautaId,
+    mode: isApproved ? 'final' : 'preview',
+    scenes,
+    srtContent: buildSrtFromScenes(scriptScenes),
+    narration: {
+      enabled: true,
+      engine: project.narration?.engine,
+      voice: project.narration?.voiceName,
+      style: project.narration?.style,
+      rate: project.narration?.rate,
+      minSeconds: 0,
+      fallbackToEdge: true,
+    },
+    dynamics: project.narration?.dynamics ?? 'alta',
+    captions: project.narration?.captions ?? 'karaoke',
+    videoMode: project.narration?.videoMode ?? 'fotos',
+    headline: project.script?.hook || project.script?.suggestedTitle,
+    closingText: project.script?.closing,
+    editorial: project.editorial,
+    sources: (project.dossier?.sources ?? []).slice(0, 3).map((source) => ({
+      title: source.title,
+      domain: source.domain,
+      url: source.url,
+      excerpt: source.excerpt,
+      publishedAt: source.publishedAt,
+    })),
+    artifacts: {
+      manifestJson: JSON.stringify({ pautaId, title: project.title }),
+      scriptText: project.script?.hook ?? '',
+      qcReport: project.qc ?? null,
+    },
+  };
+
+  const job = enqueueRender({
+    label: `Console ${pautaId}`,
+    pautaId,
+    mode: spec.mode,
+    run: () => executeRender(spec),
+  });
+
+  res.status(202).json({ job, mode: spec.mode });
 });
 
 app.use(

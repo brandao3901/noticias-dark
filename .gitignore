@@ -54,3 +54,13 @@ Thumbs.db
 # Artefatos gerados pelo servidor
 /projects
 /release
+
+# Kokoro (modelos grandes, fora do git)
+*.onnx
+*.bin
+voz_canal.npy
+/build/
+__pycache__/
+*.pyc
+.venv/
+.streamlit/secrets.toml

@@ -7,6 +7,20 @@ Funciona local: nada de assinatura de vídeo, nada de nuvem. O estado de cada pa
 
 ---
 
+## Console local (Streamlit)
+
+Além do app Angular, há um console rápido para gerar vídeo e mexer na voz:
+
+```bash
+pip install -r requirements.txt          # kokoro-onnx, soundfile, numpy, streamlit
+python python/download_models.py         # 354 MB, só na primeira vez
+python -m streamlit run studio_app.py --server.runOnSave true
+```
+
+Abre em **http://localhost:8501** com três abas: **Gerar vídeo** (edita roteiro, renderiza, assiste),
+**Estúdio de voz** (mistura de vozes Kokoro com prévia e voz padrão) e **Histórico**.
+No Windows, duplo clique em `iniciar-console.cmd`. A voz padrão fica em `config.json` + `voz_canal.npy`.
+
 ## Requisitos
 
 | Item | Versão / observação |

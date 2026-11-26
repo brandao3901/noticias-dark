@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { normalizeTextForPtBrSpeech } from '../app/services/pt-br-speech';
 import { activeTtsModel, synthesizeSpeechWithGemini } from './gemini';
+import { kokoroModelsReady, readKokoroConfig, synthesizeKokoroWav } from './kokoro';
 import { projectsRoot } from './projects';
 
 const execFileAsync = promisify(execFile);
@@ -14,7 +15,7 @@ const execFileAsync = promisify(execFile);
 /** Taxa usada no PCM intermediario (o AAC final e reamostrado para 44.1 kHz). */
 export const NARRATION_SAMPLE_RATE = 16_000;
 
-export type TtsEngine = 'gemini' | 'edge';
+export type TtsEngine = 'kokoro' | 'gemini' | 'edge';
 
 export const DEFAULT_TTS_ENGINE: TtsEngine = 'gemini';
 
@@ -33,6 +34,10 @@ export interface TtsVoice {
  * de deixar o vídeo mudo.
  */
 export const TTS_VOICES: TtsVoice[] = [
+  { id: 'blend', engine: 'kokoro', label: 'Voz do canal', description: 'Kokoro · mistura 70/30' },
+  { id: 'pm_alex', engine: 'kokoro', label: 'Alex', description: 'Kokoro · masculina' },
+  { id: 'pf_dora', engine: 'kokoro', label: 'Dora', description: 'Kokoro · feminina' },
+  { id: 'pm_santa', engine: 'kokoro', label: 'Santa', description: 'Kokoro · masculina' },
   { id: 'Kore', engine: 'gemini', label: 'Kore', description: 'firme, feminina' },
   { id: 'Charon', engine: 'gemini', label: 'Charon', description: 'grave, masculina' },
   { id: 'Puck', engine: 'gemini', label: 'Puck', description: 'jovem, masculina' },
@@ -52,6 +57,7 @@ export type PtBrVoiceId = string;
 
 export const DEFAULT_PT_BR_VOICE = 'pt-BR-AntonioNeural';
 
+export const KOKORO_VOICES = TTS_VOICES.filter((voice) => voice.engine === 'kokoro');
 export const GEMINI_VOICES = TTS_VOICES.filter((voice) => voice.engine === 'gemini');
 export const EDGE_VOICES = TTS_VOICES.filter((voice) => voice.engine === 'edge');
 
@@ -69,12 +75,15 @@ export function defaultTtsEngine(): TtsEngine {
   const configured = (process.env['TTS_ENGINE'] ?? '').trim().toLowerCase();
   if (configured === 'edge') return 'edge';
   if (configured === 'gemini') return 'gemini';
-  // Sem escolha explícita: Gemini se houver chave; senão Edge.
+  if (configured === 'kokoro') return 'kokoro';
+  // Sem escolha explícita: Kokoro se os modelos estiverem na raiz; senão o que
+  // já existia (Gemini com chave ou Edge).
+  if (kokoroModelsReady()) return 'kokoro';
   return process.env['GEMINI_API_KEY']?.trim() ? 'gemini' : 'edge';
 }
 
 export function isTtsEngine(value: unknown): value is TtsEngine {
-  return value === 'gemini' || value === 'edge';
+  return value === 'kokoro' || value === 'gemini' || value === 'edge';
 }
 
 /**
@@ -88,10 +97,12 @@ export function resolveTtsEngine(requested?: unknown, voice?: string): TtsEngine
 }
 
 export function resolveTtsVoice(engine: TtsEngine, requested?: string): TtsVoice {
-  const pool = engine === 'gemini' ? GEMINI_VOICES : EDGE_VOICES;
+  const pool =
+    engine === 'kokoro' ? KOKORO_VOICES : engine === 'gemini' ? GEMINI_VOICES : EDGE_VOICES;
   const found = pool.find((voice) => voice.id === requested);
   if (found) return found;
 
+  if (engine === 'kokoro') return KOKORO_VOICES[0];
   if (engine === 'gemini') {
     const fromEnv = GEMINI_VOICES.find((voice) => voice.id === process.env['GEMINI_TTS_VOICE']);
     return fromEnv ?? GEMINI_VOICES[0];
@@ -478,8 +489,10 @@ export interface NarrationTrack {
   engineUsed: TtsEngine | 'mixed';
   voiceUsed: string;
   ttsModel?: string;
-  /** Cenas que caíram no Edge por falha/cota do Gemini. */
+  /** Cenas que caíram na reserva (Edge) por falha do motor principal. */
   fallbackScenes: number[];
+  /** Motivo do primeiro fallback (para a UI e o render.json). */
+  fallbackReason?: string;
 }
 
 /** Ritmo medio da voz neural em pt-BR, em palavras por segundo. */
@@ -534,6 +547,7 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
   }
 
   const fallbackScenes: number[] = [];
+  let fallbackReason: string | undefined;
   const enginesUsed = new Set<TtsEngine>();
   let ttsModel: string | undefined;
 
@@ -554,11 +568,17 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
     if (!clean || clean.replace(/[^\p{L}\p{N}]+/gu, '').length === 0) return null;
 
     const attempt = async (which: TtsEngine): Promise<Buffer> => {
+      const kokoroVoice = which === 'kokoro' ? voice.id : 'blend';
       const key = cacheKey({
         engine: which,
-        voice: which === 'gemini' ? voice.id : 'pt-BR-AntonioNeural',
+        voice:
+          which === 'kokoro'
+            ? `kokoro:${kokoroVoice}`
+            : which === 'gemini'
+              ? voice.id
+              : 'pt-BR-AntonioNeural',
         style: which === 'gemini' ? style : '',
-        model: which === 'gemini' ? model : 'edge',
+        model: which === 'kokoro' ? 'kokoro-onnx' : which === 'gemini' ? model : 'edge',
         text: clean,
       });
 
@@ -566,6 +586,20 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
       if (cached) return cached;
 
       const pcmPath = join(audioDir, `narracao_${String(index).padStart(2, '0')}_${which}.pcm`);
+
+      if (which === 'kokoro') {
+        const synthesized = await synthesizeKokoroWav({
+          text: clean,
+          outDir: audioDir,
+          index,
+          voice: kokoroVoice,
+          speed: rateValue,
+        });
+        ttsModel = 'kokoro-onnx';
+        const pcm = await decodeToPcm(synthesized.wavPath, pcmPath);
+        await writeCachedPcm(key, pcm);
+        return pcm;
+      }
 
       if (which === 'gemini') {
         const synthesized = await synthesizeGeminiWav({
@@ -600,6 +634,23 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
       const pcm = await attempt('edge');
       enginesUsed.add('edge');
       return pcm;
+    }
+
+    if (engine === 'kokoro') {
+      try {
+        const pcm = await attempt('kokoro');
+        enginesUsed.add('kokoro');
+        return pcm;
+      } catch (err) {
+        fallbackReason = fallbackReason ?? (err instanceof Error ? err.message : String(err));
+        console.warn('[kokoro] falhou na cena', index + 1, ':', fallbackReason);
+        if (!fallbackToEdge) throw err;
+        // Kokoro fora do ar (Python/modelo): cai na reserva sem deixar cena muda.
+        const pcm = await attempt('edge');
+        enginesUsed.add('edge');
+        fallbackScenes.push(index + 1);
+        return pcm;
+      }
     }
 
     try {
@@ -731,7 +782,13 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
   await writeWav(pcm, wavPath);
 
   const engineUsed: NarrationTrack['engineUsed'] =
-    enginesUsed.size > 1 ? 'mixed' : enginesUsed.has('gemini') ? 'gemini' : 'edge';
+    enginesUsed.size > 1
+      ? 'mixed'
+      : enginesUsed.has('kokoro')
+        ? 'kokoro'
+        : enginesUsed.has('gemini')
+          ? 'gemini'
+          : 'edge';
 
   return {
     wavPath,
@@ -745,6 +802,7 @@ export async function buildNarrationTrack(params: BuildNarrationParams): Promise
     voiceUsed: voice.id,
     ttsModel: ttsModel ?? (engine === 'gemini' ? model : undefined),
     fallbackScenes,
+    fallbackReason,
   };
 }
 

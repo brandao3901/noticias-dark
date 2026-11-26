@@ -24,6 +24,7 @@ export interface RenderJobResult {
   ttsEngine?: string;
   ttsVoice?: string;
   ttsModel?: string;
+  ttsFallback?: string;
 }
 
 export interface PublishJobResult {
