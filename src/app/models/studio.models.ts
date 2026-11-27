@@ -212,7 +212,15 @@ export interface DossierEvidence {
 
 export interface MediaAsset {
   id: string;
-  provider: 'wikimedia' | 'internet_archive' | 'pexels' | 'article' | 'ai_cloud' | 'ai_local';
+  provider:
+    | 'wikimedia'
+    | 'internet_archive'
+    | 'pexels'
+    | 'openverse'
+    | 'nasa'
+    | 'article'
+    | 'ai_cloud'
+    | 'ai_local';
   kind: 'image' | 'video';
   title: string;
   pageUrl: string;

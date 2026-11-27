@@ -1463,6 +1463,75 @@ export class StudioStore {
     this.addSceneMedia(pautaId, sceneId, asset, isDocumentary);
   }
 
+  /**
+   * "Mídia da cena": procura foto REAL em todos os acervos e só anexa se achar.
+   * A IA nunca é chamada aqui — se não houver foto, devolve 'none' para a
+   * interface oferecer a geração.
+   */
+  async fillSceneFromLibrary(
+    pautaId: string,
+    sceneId: string,
+  ): Promise<{ source: 'library' | 'none'; count: number }> {
+    const target = this.pautas().find((p) => p.id === pautaId);
+    const scene = target?.script?.scenes.find((item) => item.id === sceneId);
+    if (!target || !scene) return { source: 'none', count: 0 };
+
+    const query = scene.visualQueryEn?.trim() || scene.visualQueryPt?.trim() || target.title;
+    if (!query) return { source: 'none', count: 0 };
+
+    this.mediaBusy.set(true);
+    this.clearFeedback();
+
+    try {
+      const res = await firstValueFrom(
+        this.http.post<{
+          source?: 'library' | 'none' | 'ai';
+          assets?: MediaAsset[];
+          relaxed?: boolean;
+          message?: string;
+          error?: string;
+        }>('/api/media/smart', {
+          query,
+          title: target.title,
+          narration: scene.narration,
+          editorial: target.editorial,
+          personality: target.radar?.personalidade,
+          kind: 'image',
+          allowGeneration: false,
+        }),
+      );
+
+      const assets = res.assets ?? [];
+      if (res.source === 'library' && assets.length) {
+        // Traz até 2 fotos diferentes para a cena ter variação de plano.
+        for (const asset of assets.slice(0, 2)) {
+          this.addSceneMedia(pautaId, sceneId, asset, false);
+        }
+        this.actionFeedback.set({
+          type: 'info',
+          text: res.relaxed
+            ? `${assets.length} foto(s) do acervo anexada(s) (casamento aproximado).`
+            : `${assets.length} foto(s) real(is) do acervo anexada(s).`,
+        });
+        return { source: 'library', count: assets.length };
+      }
+
+      this.actionFeedback.set({
+        type: 'warn',
+        text: res.message ?? 'Nenhuma foto real encontrada. Use "Gerar imagem (IA)" se quiser uma ilustração.',
+      });
+      return { source: 'none', count: 0 };
+    } catch (err) {
+      this.actionFeedback.set({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Falha ao buscar mídia da cena.',
+      });
+      return { source: 'none', count: 0 };
+    } finally {
+      this.mediaBusy.set(false);
+    }
+  }
+
   /** Gera uma imagem ilustrativa (IA local) para a cena e anexa como mídia. */
   async generateSceneIllustration(
     pautaId: string,
@@ -1857,7 +1926,7 @@ export class StudioStore {
 
   async searchMedia(
     query: string,
-    provider: 'wikimedia' | 'internet_archive',
+    provider: 'auto' | 'wikimedia' | 'internet_archive' | 'openverse' | 'nasa' | 'pexels',
     kind: 'image' | 'video' = 'image',
   ): Promise<{ assets: MediaAsset[]; configured: boolean; error?: string }> {
     this.mediaBusy.set(true);

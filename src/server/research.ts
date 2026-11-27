@@ -1570,12 +1570,12 @@ export async function autoFillScenesMedia(params: {
     const key = `${provider}::${kind}::${query.toLowerCase()}`;
     const existing = queryCache.get(key);
     if (existing) return existing;
-    const res =
-      provider === 'internet_archive'
-        ? await searchInternetArchiveMedia(query, kind)
-        : await searchWikimediaMedia(query, kind);
-    queryCache.set(key, res.assets);
-    return res.assets;
+    // Todas as fontes disponíveis (Openverse/NASA/Pexels junto com Wikimedia e
+    // Archive). O autofill NUNCA gera IA: só anexa foto real de acervo.
+    const { searchAllMedia } = await import('./media-providers');
+    const merged = await searchAllMedia(query, kind);
+    queryCache.set(key, merged.assets);
+    return merged.assets;
   };
 
   const results: Array<{

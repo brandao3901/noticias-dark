@@ -1,7 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, inject, output, signal } from '@angular/core';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
+import { HttpClient } from '@angular/common/http';
 import type { MediaAsset, PautaRecord, ScriptScene } from '../models/studio.models';
+
+type MediaProviderOption = {
+  id: 'auto' | 'wikimedia' | 'internet_archive' | 'openverse' | 'nasa' | 'pexels';
+  label: string;
+  available: boolean;
+};
 import { KokoroVoiceStudio } from './kokoro-voice-studio';
 import { NarrationVoicePicker } from './narration-voice-picker';
 import { SpeechPreview } from '../services/speech-preview';
@@ -308,26 +315,20 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
                     />
                   </div>
                   <div class="flex items-center gap-1 rounded-lg border border-white/10 bg-[#0a0d12] p-1">
-                    <button
-                      type="button"
-                      (click)="provider.set('wikimedia')"
-                      class="rounded px-2.5 py-1.5 text-xs font-medium whitespace-nowrap"
-                      [class.bg-white/15]="provider() === 'wikimedia'"
-                      [class.text-white]="provider() === 'wikimedia'"
-                      [class.text-slate-400]="provider() !== 'wikimedia'"
-                    >
-                      Wikimedia Commons
-                    </button>
-                    <button
-                      type="button"
-                      (click)="provider.set('internet_archive')"
-                      class="rounded px-2.5 py-1.5 text-xs font-medium whitespace-nowrap"
-                      [class.bg-white/15]="provider() === 'internet_archive'"
-                      [class.text-white]="provider() === 'internet_archive'"
-                      [class.text-slate-400]="provider() !== 'internet_archive'"
-                    >
-                      Internet Archive
-                    </button>
+                    @for (item of providerOptions(); track item.id) {
+                      <button
+                        type="button"
+                        (click)="provider.set(item.id)"
+                        [disabled]="!item.available"
+                        [title]="item.available ? item.label : 'Requer PEXELS_API_KEY no .env'"
+                        class="rounded px-2.5 py-1.5 text-xs font-medium whitespace-nowrap disabled:opacity-40"
+                        [class.bg-white/15]="provider() === item.id"
+                        [class.text-white]="provider() === item.id"
+                        [class.text-slate-400]="provider() !== item.id"
+                      >
+                        {{ item.label }}
+                      </button>
+                    }
                   </div>
                   <div class="flex items-center gap-1 rounded-lg border border-white/10 bg-[#0a0d12] p-1">
                     <button
@@ -542,12 +543,37 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
   `,
 })
 export class MediaVoiceView {
+  private readonly http = inject(HttpClient);
   readonly store = inject(StudioStore);
   readonly speech = inject(SpeechPreview);
   readonly goToStudio = output<void>();
 
-  readonly provider = signal<'wikimedia' | 'internet_archive'>('wikimedia');
+  readonly provider = signal<MediaProviderOption['id']>('auto');
+  readonly providerOptions = signal<MediaProviderOption[]>([
+    { id: 'auto', label: 'Todas as fontes', available: true },
+    { id: 'wikimedia', label: 'Wikimedia', available: true },
+    { id: 'openverse', label: 'Openverse', available: true },
+    { id: 'nasa', label: 'NASA', available: true },
+    { id: 'internet_archive', label: 'Archive', available: true },
+    { id: 'pexels', label: 'Pexels', available: false },
+  ]);
   readonly mediaKind = signal<'image' | 'video'>('image');
+
+  constructor() {
+    this.http
+      .get<{ providers: Array<{ id: string; label: string; available: boolean }> }>('/api/media/providers')
+      .subscribe((res: { providers: Array<{ id: string; label: string; available: boolean }> }) => {
+        const mapa = new Map<string, boolean>(
+          res.providers.map((p) => [p.id, p.available] as [string, boolean]),
+        );
+        this.providerOptions.update((list) =>
+          list.map((item) => ({
+            ...item,
+            available: item.id === 'auto' ? true : mapa.get(item.id) ?? item.available,
+          })),
+        );
+      });
+  }
   readonly autoMaxPerScene = signal<number>(1);
   readonly autoKindPref = signal<'both' | 'image' | 'video'>('both');
   readonly selectedSceneId = signal<string>('');
@@ -617,6 +643,11 @@ export class MediaVoiceView {
     });
     this.selectedSceneId.set('');
     this.searchResults.set([]);
+  }
+
+  /** "Mídia da cena": busca foto real primeiro; IA nunca é chamada aqui. */
+  async runSceneLibrary(pauta: PautaRecord, sceneId: string): Promise<void> {
+    await this.store.fillSceneFromLibrary(pauta.id, sceneId);
   }
 
   /** Botão "Gerar imagem (IA)": ilustração local, marcada como ilustrativa. */

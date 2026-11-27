@@ -1767,3 +1767,56 @@ Pedido: *"geração de imagens relacionadas à matéria de forma grátis, nativa
 | Pela API | `POST /api/media/generate` → `provider: ai_local`, arquivo em `projects/.ai-images`, URL servida (200 image/png) |
 | Cache | mesmo prompt+seed responde na hora |
 | Render | vídeo gerado usando a imagem local (amostra em `amostras/teste-ia-local-24s.mp4`) |
+
+---
+
+## 37. Mais acervos de foto e "foto real antes da IA" (27/11/2026)
+
+Pedido: *"adicione os outros modos de pesquisa de imagens; avaliar se não tem opção antes de pedir para gerar por IA"*.
+
+### 37.1 Fontes novas (`src/server/media-providers.ts`)
+
+| Fonte | Endpoint | Chave | Licença |
+|---|---|---|---|
+| **Openverse** | `api.openverse.org/v1/images/` | não | CC comercial/modificação |
+| **NASA** | `images-api.nasa.gov/search` | não | domínio público |
+| **Pexels** | `api.pexels.com/v1/search` | `PEXELS_API_KEY` (opcional) | Pexels License |
+
+- Todas devolvem `MediaAsset` com autor, licença, URL da licença e crédito.
+- Dedupe por URL entre provedores; `Promise.allSettled` para um não derrubar o outro.
+
+### 37.2 Foto real primeiro
+
+`POST /api/media/smart` decide em uma chamada:
+
+1. busca em **todas** as fontes (`visualQueryEn`/`Pt` da cena);
+2. passa pela régua de qualidade existente (`evaluateAssetMatch`), agora com o
+   **contexto da cena** (título + narração) — antes um termo de 1 palavra era sempre recusado;
+3. se nada passa na régua estrita, usa o **critério relaxado** (termo presente + coerência ≥ 2,5);
+4. só se **nada** for aceito e o pedido permitir, gera **1 ilustração** por IA;
+5. sem permissão de geração, devolve `source: 'none'` para a interface oferecer.
+
+### 37.3 Autofill
+
+`autoFillScenesMedia` passou a consultar **todas as fontes** (Openverse, NASA, Pexels quando houver
+chave, Wikimedia, Archive) e **nunca** chama a IA.
+
+### 37.4 Interface (Mídia e Voz)
+
+- Seletor: **Todas as fontes** (padrão) · Wikimedia · Openverse · NASA · Archive · Pexels
+  (Pexels desabilitado com a instrução quando falta a chave — disponibilidade lida de `/api/media/providers`).
+- Botão **"Mídia da cena"**: busca foto real e anexa até 2; se não houver, avisa e aponta o
+  botão **"+ Gerar imagem (IA)"**, que continua manual.
+
+### 37.5 Medições
+
+| Teste | Resultado |
+|---|---|
+| Openverse "neymar" | 18 imagens em 0,96 s |
+| NASA "mars" | 20 imagens em 0,56 s |
+| `provider=auto` "courthouse" | 46 ativos em 2,0 s |
+| Pexels sem chave | erro claro ("adicione PEXELS_API_KEY") |
+| `smart` "courthouse" | `library` · 8 fotos · 1,6 s (relaxado) |
+| `smart` "mars exploration" | `library` · 8 fotos · 0,9 s (estrito) |
+| `smart` termo inexistente | `none` (não gasta IA) |
+| Autofill "Nasa encontra água em Marte" | NASA + Wikimedia + Openverse, 9 s para 2 cenas |

@@ -23,6 +23,13 @@ import {
   illustrationToAsset,
   imageAiMode,
 } from './server/imagegen';
+import {
+  mediaProviders,
+  searchAllMedia,
+  searchNasaMedia,
+  searchOpenverseMedia,
+  searchPexelsMedia,
+} from './server/media-providers';
 import type { RadarScope } from './app/models/studio.models';
 import {
   generateStructuredShortScript,
@@ -41,6 +48,7 @@ import {
 } from './server/narration';
 import {
   autoFillScenesMedia,
+  evaluateAssetMatch,
   extractArticleMetadata,
   scoreAssetForQuery,
   searchGdeltCoverage,
@@ -573,10 +581,94 @@ app.post('/api/media/generate', async (req, res) => {
   }
 });
 
+// Foto real primeiro: busca em todos os acervos e só gera IA se nada servir.
+app.post('/api/media/smart', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const query = String(body['query'] ?? body['term'] ?? '').trim();
+  const kind: 'image' | 'video' = body['kind'] === 'video' ? 'video' : 'image';
+  const allowGeneration = body['allowGeneration'] === true;
+
+  if (!query) {
+    res.status(400).json({ error: 'Informe o termo de busca da cena.' });
+    return;
+  }
+
+  try {
+    const merged = await searchAllMedia(query, kind);
+    // Contexto = palavras da cena (título/narração), não a própria busca.
+    const contextTokens = `${String(body['title'] ?? '')} ${String(body['narration'] ?? '')}`
+      .toLowerCase()
+      .split(/[^a-z0-9à-ú]+/i)
+      .filter((token) => token.length >= 4);
+
+    const scored = merged.assets
+      .map((asset) => {
+        const match = evaluateAssetMatch(asset, query, contextTokens);
+        return { asset, strict: match.accepted, score: match.score + scoreAssetForQuery(asset, query) };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    const strict = scored.filter((entry) => entry.strict);
+    // Critério relaxado: o termo aparece no título/descrição (coerência alta), mas
+    // a régua estrita não achou contexto. Melhor foto real do que IA.
+    const relaxed = scored.filter((entry) => !entry.strict && entry.score >= 2.5);
+    const accepted = (strict.length ? strict : relaxed).slice(0, 8).map((entry) => entry.asset);
+
+    if (accepted.length) {
+      res.json({
+        source: 'library',
+        assets: accepted,
+        relaxed: strict.length === 0,
+        errors: merged.errors,
+        message: `${accepted.length} foto(s) real(is) encontrada(s) no acervo.`,
+      });
+      return;
+    }
+
+    if (!allowGeneration) {
+      res.json({
+        source: 'none',
+        assets: [],
+        errors: merged.errors,
+        message: 'Nenhuma foto real encontrada. Você pode gerar uma ilustração por IA.',
+      });
+      return;
+    }
+
+    const generated = await generateIllustration({
+      prompt:
+        String(body['prompt'] ?? '').trim() ||
+        buildIllustrationPrompt({
+          narration: String(body['narration'] ?? query),
+          title: typeof body['title'] === 'string' ? body['title'] : undefined,
+          editorial: typeof body['editorial'] === 'string' ? body['editorial'] : undefined,
+          personality:
+            body['personality'] === 'documentario' ||
+            body['personality'] === 'misterioso' ||
+            body['personality'] === 'impactante' ||
+            body['personality'] === 'explicativo' ||
+            body['personality'] === 'jornalistico'
+              ? (body['personality'] as 'documentario' | 'misterioso' | 'impactante' | 'explicativo' | 'jornalistico')
+              : undefined,
+        }),
+    });
+
+    res.json({
+      source: 'ai',
+      asset: illustrationToAsset(generated, String(body['title'] ?? query)),
+      errors: merged.errors,
+      message: 'Nenhuma foto real encontrada: geramos uma ilustração por IA (marcada como ilustrativa).',
+    });
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Falha ao buscar/gerar mídia para a cena.',
+    });
+  }
+});
+
 app.get('/api/media/search', async (req, res) => {
   const q = typeof req.query['q'] === 'string' ? req.query['q'].trim() : '';
-  const provider =
-    req.query['provider'] === 'internet_archive' ? 'internet_archive' : 'wikimedia';
+  const rawProvider = String(req.query['provider'] ?? 'auto');
   const kind = req.query['kind'] === 'video' ? 'video' : 'image';
 
   if (!q) {
@@ -584,23 +676,39 @@ app.get('/api/media/search', async (req, res) => {
     return;
   }
 
-  if (provider === 'internet_archive') {
-    const result = await searchInternetArchiveMedia(q, kind);
+  // "auto" consulta todos os acervos disponíveis e ordena pelo critério de qualidade.
+  if (rawProvider === 'auto') {
+    const merged = await searchAllMedia(q, kind);
     res.json({
-      ...result,
-      assets: [...result.assets].sort(
-        (a, b) => scoreAssetForQuery(b, q) - scoreAssetForQuery(a, q),
-      ),
+      assets: [...merged.assets].sort((a, b) => scoreAssetForQuery(b, q) - scoreAssetForQuery(a, q)),
+      provider: 'auto',
+      errors: merged.errors,
+      configured: true,
     });
     return;
   }
 
-  const result = await searchWikimediaMedia(q, kind);
+  const result =
+    rawProvider === 'openverse'
+      ? await searchOpenverseMedia(q, kind)
+      : rawProvider === 'nasa'
+        ? await searchNasaMedia(q)
+        : rawProvider === 'pexels'
+          ? await searchPexelsMedia(q, kind)
+          : rawProvider === 'internet_archive'
+            ? await searchInternetArchiveMedia(q, kind)
+            : await searchWikimediaMedia(q, kind);
+
   res.json({
     ...result,
+    provider: rawProvider,
     assets: [...result.assets].sort((a, b) => scoreAssetForQuery(b, q) - scoreAssetForQuery(a, q)),
-    configured: true,
+    configured: !result.error,
   });
+});
+
+app.get('/api/media/providers', (_req, res) => {
+  res.json({ providers: mediaProviders() });
 });
 
 // Busca automática de nomes citados e preenchimento múltiplo de mídia por cena
