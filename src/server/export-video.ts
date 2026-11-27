@@ -112,9 +112,11 @@ function resolveLabelFontPath(): string | null {
 /**
  * Zoom lento (Ken Burns) sobre imagens paradas, com variantes de câmera.
  *
- * Uma foto congelada por 10 s parece vídeo travado. Aqui cada shot recebe um
- * movimento diferente (aproximação, afastamento, pan lateral, diagonal) para
- * dois cortes seguidos nunca repetirem a mesma câmera.
+ * Sobre o tremor: `zoompan` arredonda x/y em pixels da imagem de entrada. Se o
+ * movimento acontece em 1080 px, o passo de 1 px por quadro aparece como
+ * "tremida". A solução é ampliar a entrada (2×) antes do zoompan: o mesmo
+ * deslocamento vira meio pixel e o olho lê como movimento contínuo. As
+ * transições de troca de imagem (flash/punch) continuam iguais.
  */
 function buildKenBurnsFilter(
   segmentIndex: number,
@@ -132,30 +134,38 @@ function buildKenBurnsFilter(
   const zoomIn = punch ? `${punch}+${dz.toFixed(6)}*(on-4)` : `1+${dz.toFixed(6)}*on`;
   const zoomOut = punch ? `${punch}+${(1.10 + dz * frames).toFixed(6)}-${dz.toFixed(6)}*on` : `1.10-${dz.toFixed(6)}*on`;
 
-  const panX = (from: number, to: number): string =>
-    `if(eq(zoom,1),0,${from}*iw/zoom+(${to}-${from})*iw/zoom*on/${frames})`;
-  const panY = (from: number, to: number): string =>
-    `if(eq(zoom,1),0,${from}*ih/zoom+(${to}-${from})*ih/zoom*on/${frames})`;
+  // Posição em fração da área disponível (0 = borda, 0.5 = centro). Sem
+  // `if(eq(zoom,1))`: o salto no primeiro quadro era parte do tremor.
+  const frac = (from: number, to: number): string =>
+    `(${from.toFixed(3)}+(${(to - from).toFixed(3)})*on/${frames})`;
+  const xAt = (from: number, to: number): string => `(iw-iw/zoom)*${frac(from, to)}`;
+  const yAt = (from: number, to: number): string => `(ih-ih/zoom)*${frac(from, to)}`;
+  const centered = '(iw-iw/zoom)*0.5';
+
+  // Entrada ampliada 2×: é o que elimina o passo de 1 px (tremor).
+  const upscale = ',scale=3240:5760:flags=lanczos';
+  const zoompan = (z: string, x: string, y: string): string =>
+    `,zoompan=z='${z}':x='${x}':y='${y}':d=1:s=1080x1920:fps=${fps}`;
 
   switch (variant) {
     case 1:
       // afastamento
-      return `,zoompan=z='${zoomOut}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+      return `${upscale}${zoompan(zoomOut, centered, '(ih-ih/zoom)*0.5')}`;
     case 2:
       // pan esquerda -> direita
-      return `,zoompan=z='${punch ?? '1.08'}':x='${panX(0, 0.10)}':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+      return `${upscale}${zoompan('1.12', xAt(0.32, 0.68), '(ih-ih/zoom)*0.5')}`;
     case 3:
       // pan direita -> esquerda
-      return `,zoompan=z='${punch ?? '1.08'}':x='${panX(0.10, 0)}':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+      return `${upscale}${zoompan('1.12', xAt(0.68, 0.32), '(ih-ih/zoom)*0.5')}`;
     case 4:
       // diagonal (baixo-direita -> cima-esquerda)
-      return `,zoompan=z='${zoomIn}':x='${panX(0.02, 0.06)}':y='${panY(0.02, 0.06)}':d=1:s=1080x1920:fps=${fps}`;
+      return `${upscale}${zoompan(zoomIn, xAt(0.38, 0.56), yAt(0.38, 0.56))}`;
     case 5:
       // diagonal oposta
-      return `,zoompan=z='${zoomIn}':x='${panX(0.06, 0.02)}':y='${panY(0.06, 0.02)}':d=1:s=1080x1920:fps=${fps}`;
+      return `${upscale}${zoompan(zoomIn, xAt(0.56, 0.38), yAt(0.56, 0.38))}`;
     default:
       // aproximação central
-      return `,zoompan=z='${zoomIn}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
+      return `${upscale}${zoompan(zoomIn, centered, '(ih-ih/zoom)*0.5')}`;
   }
 }
 

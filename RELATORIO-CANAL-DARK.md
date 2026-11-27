@@ -1691,3 +1691,35 @@ O modo documento era estático (ou só rolava).
 
 - `arte-canal/layout-2.png`: cartões com tarja alta, personagem no canto e texto sem sobreposição.
 - `arte-canal/doc-final-layout.png`: documento com data/manchete intactas e personagem na área livre.
+
+---
+
+## 35. Ken Burns sem tremor (27/11/2026)
+
+Relato: *"no Ken Burns a imagem fica tremendo — quero mudar isso, mas não o efeito quando a imagem muda"*.
+
+### 35.1 Causa
+
+`zoompan` calcula `x`/`y` em **pixels inteiros da imagem de entrada**. Com a entrada em 1080 px,
+o movimento de ~0,05 px por quadro arredonda: alguns quadros não saem do lugar e o seguinte
+"pula" 1 px — na tela isso é tremor. Havia ainda um `if(eq(zoom,1),0,…)` que dava um salto no
+primeiro quadro do shot.
+
+### 35.2 Correção
+
+- **Entrada ampliada 3×** (3240×5760) antes do `zoompan`: o mesmo deslocamento vira 1/3 de pixel
+  e o movimento fica contínuo.
+- Fórmula de pan sem salto: `x = (iw - iw/zoom) * fração`, com fração indo de 0,32 a 0,68
+  (antes ia de 0,08 a 0,72 — pan longo demais, que também dava impressão de instabilidade).
+- **Transições intactas**: flash e punch continuam iguais; o punch deixou de ser aplicado aos
+  pans (só nos zooms), porque num pan ele parecia um "solavanco".
+
+### 35.3 Medição (quadros consecutivos da mesma cena, 16 amostras)
+
+| Versão | PSNR entre quadros | Quadros idênticos |
+|---|---|---|
+| antes | 33,8 dB | sim, em alguns passos |
+| depois | **39,2 dB** (37–43 dB estável) | **0** |
+
+PSNR maior entre quadros consecutivos = deslocamento menor e mais uniforme por quadro.
+O movimento continua existindo: entre 2 s e 3 s o PSNR é ~19 dB (a imagem claramente se move).
