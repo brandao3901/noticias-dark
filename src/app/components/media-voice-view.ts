@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, output, signal } from '@angular/core';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
-import type { MediaAsset, ScriptScene } from '../models/studio.models';
+import type { MediaAsset, PautaRecord, ScriptScene } from '../models/studio.models';
 import { KokoroVoiceStudio } from './kokoro-voice-studio';
 import { NarrationVoicePicker } from './narration-voice-picker';
 import { SpeechPreview } from '../services/speech-preview';
@@ -256,6 +256,15 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
                               class="text-emerald-400 hover:underline disabled:opacity-40"
                             >
                               + Auto-buscar nomes
+                            </button>
+                            <button
+                              type="button"
+                              (click)="generateSceneIllustration(pauta, scene.id)"
+                              [disabled]="store.illustrationBusy()"
+                              title="Gera uma imagem ilustrativa com IA local (não é foto do fato)"
+                              class="text-[#f0aa4b] hover:underline disabled:opacity-40"
+                            >
+                              {{ store.illustrationBusy() ? 'Gerando…' : '+ Gerar imagem (IA)' }}
                             </button>
                             <button
                               type="button"
@@ -608,6 +617,11 @@ export class MediaVoiceView {
     });
     this.selectedSceneId.set('');
     this.searchResults.set([]);
+  }
+
+  /** Botão "Gerar imagem (IA)": ilustração local, marcada como ilustrativa. */
+  async generateSceneIllustration(pauta: PautaRecord, sceneId: string): Promise<void> {
+    await this.store.generateSceneIllustration(pauta.id, sceneId);
   }
 
   async runAutoFillScene(pautaId: string, sceneId: string): Promise<void> {

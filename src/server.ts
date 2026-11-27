@@ -5,6 +5,7 @@ import {
   writeResponseToNodeResponse,
 } from '@angular/ssr/node';
 import express from 'express';
+import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -15,6 +16,13 @@ import type {
 } from './app/models/studio.models';
 import { fetchAllEditorialFeeds, matchFeedsByQuery, rankViralItems } from './server/feeds';
 import { analyzeRadarTopic, buildRadar } from './server/radar';
+import {
+  aiImagesDir,
+  buildIllustrationPrompt,
+  generateIllustration,
+  illustrationToAsset,
+  imageAiMode,
+} from './server/imagegen';
 import type { RadarScope } from './app/models/studio.models';
 import {
   generateStructuredShortScript,
@@ -503,6 +511,68 @@ app.post('/api/gemini/script', async (req, res) => {
 });
 
 // Busca de mídia licenciada sem chave (Wikimedia Commons e Internet Archive)
+// ---------------------------------------------------------------------------
+// Imagens ilustrativas geradas por IA (grátis: nuvem sem chave ou modelo local)
+// ---------------------------------------------------------------------------
+
+app.use('/api/ai-images', express.static(aiImagesDir(), { maxAge: '1h' }));
+
+app.get('/api/media/ai-status', (_req, res) => {
+  res.json({
+    mode: imageAiMode(),
+    nativeScriptReady: existsSync(join(process.cwd(), 'python', 'imagegen.py')),
+  });
+});
+
+app.post('/api/media/generate', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const narration = typeof body['narration'] === 'string' ? body['narration'] : '';
+  const title = typeof body['title'] === 'string' ? body['title'] : '';
+  const personality = body['personality'];
+  const pedido = typeof body['prompt'] === 'string' ? body['prompt'].trim() : '';
+
+  const prompt =
+    pedido ||
+    buildIllustrationPrompt({
+      narration,
+      title,
+      editorial: typeof body['editorial'] === 'string' ? body['editorial'] : undefined,
+      personality:
+        personality === 'documentario' ||
+        personality === 'misterioso' ||
+        personality === 'impactante' ||
+        personality === 'explicativo' ||
+        personality === 'jornalistico'
+          ? personality
+          : undefined,
+    });
+
+  try {
+    const generated = await generateIllustration({
+      prompt,
+      seed: Number.isFinite(Number(body['seed'])) ? Number(body['seed']) : undefined,
+      mode:
+        body['mode'] === 'native' || body['mode'] === 'cloud' || body['mode'] === 'off'
+          ? (body['mode'] as 'native' | 'cloud' | 'off')
+          : undefined,
+    });
+
+    const asset = illustrationToAsset(generated, title || narration.slice(0, 60));
+    res.json({
+      ok: true,
+      asset,
+      cached: generated.cached,
+      provider: generated.provider,
+      prompt: generated.prompt,
+      seed: generated.seed,
+    });
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Falha ao gerar a imagem ilustrativa.',
+    });
+  }
+});
+
 app.get('/api/media/search', async (req, res) => {
   const q = typeof req.query['q'] === 'string' ? req.query['q'].trim() : '';
   const provider =

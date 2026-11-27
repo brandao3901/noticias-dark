@@ -212,7 +212,7 @@ export interface DossierEvidence {
 
 export interface MediaAsset {
   id: string;
-  provider: 'wikimedia' | 'internet_archive' | 'pexels' | 'article';
+  provider: 'wikimedia' | 'internet_archive' | 'pexels' | 'article' | 'ai_cloud' | 'ai_local';
   kind: 'image' | 'video';
   title: string;
   pageUrl: string;
@@ -230,6 +230,8 @@ export interface MediaAsset {
   height: number;
   orientation: 'vertical' | 'horizontal' | 'square';
   durationSec?: number;
+  /** Arquivo local (imagem gerada por IA) — o render lê do disco, sem HTTP. */
+  localPath?: string;
 }
 
 export interface ScriptScene {

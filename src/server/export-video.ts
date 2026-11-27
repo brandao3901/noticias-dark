@@ -24,6 +24,8 @@ export interface RenderSceneInput {
     kind: 'image' | 'video';
     mediaUrl: string;
     thumbUrl: string;
+    /** Imagem gerada por IA: arquivo local, sem passar por HTTP. */
+    localPath?: string;
   }>;
   narration?: string;
   avatarMode?: 'full' | 'pip' | 'hidden';
@@ -799,6 +801,13 @@ export async function renderVerticalShortMp4(params: {
         let localMedia: { path: string; kind: 'image' | 'video' } | null = null;
 
         if (item) {
+          // Imagem gerada por IA já está no disco: o render lê direto.
+          if (item.localPath && existsSync(item.localPath)) {
+            localMedia = { path: item.localPath, kind: 'image' };
+          }
+        }
+
+        if (item && !localMedia) {
           const candidates =
             item.kind === 'video' && (item.mediaUrl.endsWith('.mp4') || item.mediaUrl.endsWith('.webm'))
               ? [

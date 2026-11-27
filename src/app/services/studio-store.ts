@@ -368,6 +368,8 @@ export class StudioStore {
   readonly scriptBusy = signal(false);
   /** Análise da pauta em andamento (Radar/Motor de Retenção). */
   readonly rerunAnalysisBusy = signal(false);
+  /** Geração de imagem ilustrativa (IA) em andamento. */
+  readonly illustrationBusy = signal(false);
   readonly mediaBusy = signal(false);
   readonly actionFeedback = signal<{ type: 'info' | 'warn' | 'error'; text: string } | null>(null);
 
@@ -1459,6 +1461,60 @@ export class StudioStore {
       return;
     }
     this.addSceneMedia(pautaId, sceneId, asset, isDocumentary);
+  }
+
+  /** Gera uma imagem ilustrativa (IA local) para a cena e anexa como mídia. */
+  async generateSceneIllustration(
+    pautaId: string,
+    sceneId: string,
+    prompt?: string,
+  ): Promise<MediaAsset | null> {
+    const target = this.pautas().find((p) => p.id === pautaId);
+    const scene = target?.script?.scenes.find((item) => item.id === sceneId);
+    if (!target || !scene) return null;
+
+    this.illustrationBusy.set(true);
+    this.clearFeedback();
+
+    try {
+      const res = await firstValueFrom(
+        this.http.post<{ ok?: boolean; asset?: MediaAsset; error?: string; cached?: boolean }>(
+          '/api/media/generate',
+          {
+            prompt,
+            title: target.title,
+            narration: scene.narration,
+            editorial: target.editorial,
+            personality: target.radar?.personalidade,
+          },
+        ),
+      );
+
+      if (!res.ok || !res.asset) {
+        this.actionFeedback.set({
+          type: 'warn',
+          text: res.error ?? 'Não foi possível gerar a imagem ilustrativa.',
+        });
+        return null;
+      }
+
+      this.addSceneMedia(pautaId, sceneId, res.asset, false);
+      this.actionFeedback.set({
+        type: 'info',
+        text: res.cached
+          ? 'Imagem ilustrativa reaproveitada do cache (IA).'
+          : 'Imagem ilustrativa gerada por IA e anexada à cena (marcada como ilustrativa).',
+      });
+      return res.asset;
+    } catch (err) {
+      this.actionFeedback.set({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Falha ao gerar a imagem.',
+      });
+      return null;
+    } finally {
+      this.illustrationBusy.set(false);
+    }
   }
 
   addSceneMedia(pautaId: string, sceneId: string, asset: MediaAsset, isDocumentary?: boolean): void {

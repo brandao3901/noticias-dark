@@ -1,0 +1,7 @@
+﻿# Dependências da geração de imagens por IA (opcional, ~1 GB de instalador + ~2,5 GB do modelo)
+# Instale com: pip install -r requirements-image.txt
+torch --index-url https://download.pytorch.org/whl/cpu
+diffusers>=0.31
+transformers>=4.44
+accelerate>=0.34
+safetensors>=0.4

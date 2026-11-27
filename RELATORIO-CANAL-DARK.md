@@ -1723,3 +1723,47 @@ primeiro quadro do shot.
 
 PSNR maior entre quadros consecutivos = deslocamento menor e mais uniforme por quadro.
 O movimento continua existindo: entre 2 s e 3 s o PSNR é ~19 dB (a imagem claramente se move).
+
+---
+
+## 36. Imagens ilustrativas geradas por IA, de graça e no PC (27/11/2026)
+
+Pedido: *"geração de imagens relacionadas à matéria de forma grátis, nativa no PC como a narração"*.
+
+### 36.1 O que foi verificado antes
+
+| Caminho | Resultado |
+|---|---|
+| **Pollinations** (nuvem sem chave) | funcionou no primeiro teste, mas passou a responder **HTTP 402** (cobrança) — descartado |
+| Library of Congress | 403 (Cloudflare) |
+| Met Museum | API aposentada (410) |
+| **SD-Turbo local (CPU)** | **funciona**: 1080×1920 em **~34 s** (2 passos) no Ryzen 5 5600G |
+
+### 36.2 Como ficou
+
+- `python/imagegen.py`: Stable Diffusion **sd-turbo** em CPU (`torch` + `diffusers`), 512×896 → recorte/upscale para 1080×1920, seed e passos configuráveis. Modelo baixado uma vez na primeira execução (~6 min).
+- `src/server/imagegen.ts`: decide o modo (`IMAGE_AI=native|cloud|off`), monta o **prompt em inglês**
+  a partir da cena (remove nomes próprios para não inventar rosto de pessoa real), aplica estilo por
+  personalidade e guarda em `projects/.ai-images/<hash>.png` com **cache por prompt+seed**.
+- **Render**: `MediaAsset.localPath` faz o render ler o arquivo do disco (sem HTTP e sem passar pelo
+  guard de SSRF). O QC envia esse campo no payload.
+- **Interface**: botão **"+ Gerar imagem (IA)"** em cada cena da aba Mídia e Voz; a imagem entra
+  marcada como **ilustrativa**, com crédito "Imagem ilustrativa gerada por IA".
+- Rotas novas: `POST /api/media/generate`, `GET /api/media/ai-status`, `/api/ai-images/*` (estático).
+
+### 36.3 Limites (honestos)
+
+- ~**34 s por imagem** em CPU (roda junto com o resto; com 6 cenas, ~3 min).
+- Qualidade é **ilustração**, não foto jornalística: serve para ambientação, nunca como "a foto do fato".
+- Prompt sem nomes de pessoas reais, por decisão editorial (evitar rosto fabricado).
+- `requirements-image.txt` separado: `torch` (~1 GB de instalação) + modelo (~2,5 GB) só para quem
+  quiser a geração local.
+
+### 36.4 Prova
+
+| Teste | Resultado |
+|---|---|
+| Geração direta (CLI) | 1080×1920, **33,7 s** (2 passos) e 42,6 s (4 passos) |
+| Pela API | `POST /api/media/generate` → `provider: ai_local`, arquivo em `projects/.ai-images`, URL servida (200 image/png) |
+| Cache | mesmo prompt+seed responde na hora |
+| Render | vídeo gerado usando a imagem local (amostra em `amostras/teste-ia-local-24s.mp4`) |
