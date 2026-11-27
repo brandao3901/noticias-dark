@@ -1653,3 +1653,41 @@ Relato: *"só manda curiosidade atual, nada interessante como coisas do cotidian
 
 Cada cartão já vem com **resumo em português** e **formato/tom sugeridos** pela IA — o que
 alimenta direto o Motor de Retenção.
+
+---
+
+## 34. Tarja acima da UI do YouTube, personagem fixo e animação no documento (27/11/2026)
+
+Três pedidos do usuário sobre o vídeo renderizado.
+
+### 34.1 Tarja da notícia acima da área que o YouTube cobre
+
+O YouTube Shorts cobre ~330 px do rodapé (título, canal, botões). A tarja ficava em
+`1710–1886` e sumia atrás da interface.
+
+- Tarja agora em **1420–1580** (`barHeight 160`, `barTop = H - 500`) — visível.
+- Legenda do modo cartões subiu junto (`MarginV 40 → 80`) para não ficar atrás da tarja.
+
+### 34.2 Personagem no canto o tempo todo
+
+Antes: cena com imagem escondia o apresentador (só o fechamento mostrava PiP).
+
+- Agora, quando o avatar está ligado: **PiP em todas as cenas com imagem**; sem imagem, tela cheia.
+- PiP reduzido de 430 → **340 px**.
+- **Canto reservado**: em cartões, a tipografia ocupa só a largura livre (`reserveRight 340`),
+  então nada passa por baixo do personagem; em documento, o PiP vai para a área vazia
+  (meio-direita), sem cobrir data/manchete.
+
+### 34.3 Animação no estilo documentário
+
+O modo documento era estático (ou só rolava).
+
+- **Zoom lento** (`zoompan` 1 → 1,035 ao longo da cena) quando o movimento está ligado.
+- **Transição em preto** entre cenas: fade-in 0,22 s + fade-out 0,16 s assados no segmento.
+- Teste: PSNR 17 dB entre 3,4 s e 3,9 s (há movimento) e frame a 37/255 de brilho em 9,5 s
+  (fronteira de cena escurecendo) — as duas coisas confirmadas.
+
+### 34.4 Provas visuais
+
+- `arte-canal/layout-2.png`: cartões com tarja alta, personagem no canto e texto sem sobreposição.
+- `arte-canal/doc-final-layout.png`: documento com data/manchete intactas e personagem na área livre.

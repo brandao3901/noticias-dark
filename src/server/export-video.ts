@@ -283,7 +283,7 @@ function buildVideoFilter(params: {
     const styles: Record<string, string> = {
       default: 'Alignment=2,MarginV=48,FontSize=12',
       compact: 'Alignment=2,MarginV=6,FontSize=7',
-      cards: 'Alignment=2,MarginV=40,FontSize=7',
+      cards: 'Alignment=2,MarginV=80,FontSize=7',
     };
     const base = styles[params.captionVariant ?? 'default'] ?? styles['default'];
     filters.push(
@@ -523,6 +523,10 @@ export async function renderVerticalShortMp4(params: {
     const cardsMode = params.videoMode === 'cards';
     // Cena parada (padrão): sem Ken Burns, sem flash/punch e sem rolagem.
     const motionEnabled = params.motion === 'kenburns';
+    // Personagem em PiP reserva o canto direito desde o primeiro cartão.
+    const avatarInVideo = params.scenes.some((scene) => (scene.avatarMode ?? 'full') !== 'hidden');
+    // Em cartões/documento o topo é da manchete: o personagem vai para a área livre.
+    const pipY = cardsMode || documentMode ? '980' : '96';
     const segmentFiles: string[] = [];
     let segIdx = 0;
     let totalDuration = 0;
@@ -607,6 +611,8 @@ export async function renderVerticalShortMp4(params: {
               headline,
               sourcesLine,
               focus: beatIndex % 2 === 0 ? 'type' : 'card',
+              // Canto direito reservado ao personagem: o texto não passa por baixo.
+              reserveRight: avatarInVideo ? 340 : 0,
             });
             const pngPath = join(workDir, `card_${segIdx}.png`);
             await writeFile(pngPath, png);
@@ -680,11 +686,21 @@ export async function renderVerticalShortMp4(params: {
         if (page) {
           const scrolls = page.height > 1920;
           // Cena parada: mostra a página no topo, sem rolar.
-          const filter = scrolls && motionEnabled
+          const base = scrolls && motionEnabled
             ? `scale=1080:-1,crop=1080:1920:0:'(ih-1920)*min(t/${sceneDur.toFixed(3)},1)'`
             : scrolls
               ? 'scale=1080:-1,crop=1080:1920:0:0'
               : 'scale=1080:-1,pad=1080:1920:0:0:color=0x0a0d12';
+
+          // Estilo documentário: respiração lenta na imagem (zoom sutil) e
+          // transição de entrada/saída em preto entre uma cena e outra.
+          const frames = Math.max(2, Math.round(sceneDur * 30));
+          const zoom = motionEnabled
+            ? `,zoompan=z='1+0.035*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30`
+            : '';
+          const fadeOutStart = Math.max(0, sceneDur - 0.16).toFixed(3);
+          const transition = `,fade=t=in:st=0:d=0.22:color=black,fade=t=out:st=${fadeOutStart}:d=0.16:color=black`;
+          const filter = `${base}${zoom},fps=30${transition}`;
           await execFileAsync(
             'ffmpeg',
             [
@@ -972,11 +988,11 @@ export async function renderVerticalShortMp4(params: {
         if (requested === 'hidden') {
           mode = 'hidden';
         } else if (!hasVisual) {
+          // Sem imagem de apoio: o apresentador ocupa a tela.
           mode = 'full';
-        } else if (i === lastIndex) {
-          mode = 'pip';
         } else {
-          mode = 'hidden';
+          // Com imagem: personagem fixo no canto durante o vídeo inteiro.
+          mode = 'pip';
         }
 
         if (mode !== 'hidden') {
@@ -1115,7 +1131,7 @@ export async function renderVerticalShortMp4(params: {
           '(W-w)/2',
           'H-h-520',
         );
-        addWindows(pipWindows, needsSplit ? 'avsrcP' : '2:v', 'scale=430:-1', 'W-w-52', '110');
+        addWindows(pipWindows, needsSplit ? 'avsrcP' : '2:v', 'scale=340:-1', 'W-w-36', pipY);
       }
 
       // Cards por cima de tudo: gancho (0–2 s) e pergunta de fechamento.

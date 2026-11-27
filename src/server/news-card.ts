@@ -46,6 +46,8 @@ export interface NewsCardInput {
   headline: string;
   sourcesLine: string;
   focus?: 'type' | 'card';
+  /** Espaço reservado à direita (personagem em PiP) para o texto não passar por baixo. */
+  reserveRight?: number;
 }
 
 function escapeXml(value: string): string {
@@ -87,10 +89,10 @@ function wrap(text: string, fontSize: number, maxWidth: number): string[] {
 }
 
 /** Etiqueta âmbar com texto escuro, centralizada em `centerX`. */
-function pill(text: string, centerX: number, y: number, preferred = 38): string {
+function pill(text: string, centerX: number, y: number, preferred = 38, maxWidth = CONTENT_W): string {
   const label = text.toUpperCase();
-  const fontSize = fitSize(label, CONTENT_W - 44, preferred, 18);
-  const width = Math.min(CONTENT_W, textWidth(label, fontSize) + 44);
+  const fontSize = fitSize(label, maxWidth - 44, preferred, 18);
+  const width = Math.min(maxWidth, textWidth(label, fontSize) + 44);
   const height = Math.round(fontSize * 1.9);
   return [
     `<rect x="${Math.round(centerX - width / 2)}" y="${y}" width="${width}" height="${height}" rx="8" fill="${EMBER}"/>`,
@@ -100,6 +102,10 @@ function pill(text: string, centerX: number, y: number, preferred = 38): string 
 
 export function buildNewsCardSvg(input: NewsCardInput): string {
   const parts: string[] = [];
+  // Personagem no canto: a tipografia ocupa só a área livre.
+  const reserve = Math.max(0, Math.round(input.reserveRight ?? 0));
+  const typeWidth = CONTENT_W - reserve;
+  const typeCenter = MARGIN + typeWidth / 2;
 
   // Fundo + brilho de brasa no rodapé (identidade do canal)
   parts.push(`<rect width="${W}" height="${H}" fill="${BG}"/>`);
@@ -129,39 +135,39 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
   if (!showType && input.beat.word) {
     // Foco no cartão: uma palavra grande no topo evita o frame vazio.
     const wordText = input.beat.word.toUpperCase();
-    const wordSize = fitSize(wordText, CONTENT_W, 72, 40);
+    const wordSize = fitSize(wordText, typeWidth, 72, 40);
     parts.push(
-      `<text x="${W / 2}" y="300" text-anchor="middle" font-family="Arial" font-size="${wordSize}" font-weight="700" letter-spacing="-1" fill="${TEXT}">${escapeXml(wordText)}</text>`,
+      `<text x="${typeCenter}" y="300" text-anchor="middle" font-family="Arial" font-size="${wordSize}" font-weight="700" letter-spacing="-1" fill="${TEXT}">${escapeXml(wordText)}</text>`,
     );
     typeBottom = 320;
   }
   if (showType) {
     let y = 330;
     if (input.beat.pill) {
-      parts.push(pill(input.beat.pill, W / 2, y, 38));
+      parts.push(pill(input.beat.pill, typeCenter, y, 38, typeWidth));
       y += 96;
     }
     if (input.beat.line) {
       const lineText = input.beat.line.toUpperCase();
-      const lineSize = fitSize(lineText, CONTENT_W, 48, 24);
+      const lineSize = fitSize(lineText, typeWidth, 48, 24);
       parts.push(
-        `<text x="${W / 2}" y="${y + 42}" text-anchor="middle" font-family="Arial" font-size="${lineSize}" font-weight="700" letter-spacing="2" fill="${MUTED}">${escapeXml(lineText)}</text>`,
+        `<text x="${typeCenter}" y="${y + 42}" text-anchor="middle" font-family="Arial" font-size="${lineSize}" font-weight="700" letter-spacing="2" fill="${MUTED}">${escapeXml(lineText)}</text>`,
       );
       y += 74;
     }
     if (input.beat.word) {
       const wordText = input.beat.word.toUpperCase();
-      const wordSize = fitSize(wordText, CONTENT_W, 118, 60);
-      for (const line of wrap(wordText, wordSize, CONTENT_W).slice(0, 2)) {
+      const wordSize = fitSize(wordText, typeWidth, 118, 60);
+      for (const line of wrap(wordText, wordSize, typeWidth).slice(0, 2)) {
         parts.push(
-          `<text x="${W / 2}" y="${y + 104}" text-anchor="middle" font-family="Arial" font-size="${wordSize}" font-weight="700" letter-spacing="-1" fill="${TEXT}">${escapeXml(line)}</text>`,
+          `<text x="${typeCenter}" y="${y + 104}" text-anchor="middle" font-family="Arial" font-size="${wordSize}" font-weight="700" letter-spacing="-1" fill="${TEXT}">${escapeXml(line)}</text>`,
         );
         y += 118;
       }
       y += 10;
     }
     if (input.beat.action) {
-      parts.push(pill(input.beat.action, W / 2, y + 10, 36));
+      parts.push(pill(input.beat.action, typeCenter, y + 10, 36, typeWidth));
       y += 104;
     }
     typeBottom = y;
@@ -220,7 +226,7 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
   }
 
   const cardHeight = Math.max(240, cursorY + 44);
-  const barTopForCard = H - 210;
+  const barTopForCard = H - 500;
   const availableTop = typeBottom + 30;
   const availableBottom = barTopForCard - 36;
   // Centraliza o cartão no espaço que sobra: sem vazio grande em cima ou embaixo.
@@ -236,8 +242,9 @@ export function buildNewsCardSvg(input: NewsCardInput): string {
   );
 
   // ---- Faixa inferior: manchete + fonte ----------------------------------
-  const barHeight = 176;
-  const barTop = H - 210;
+  // YouTube Shorts cobre ~330 px do rodapé: a tarja sobe para 1420–1580.
+  const barHeight = 160;
+  const barTop = H - 500;
   parts.push(
     `<rect x="0" y="${barTop}" width="${W}" height="${barHeight}" fill="#000000" fill-opacity="0.80"/>`,
     `<rect x="0" y="${barTop}" width="12" height="${barHeight}" fill="${EMBER}"/>`,
