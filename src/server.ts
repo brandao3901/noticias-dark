@@ -267,8 +267,25 @@ app.get('/api/radar', async (req, res) => {
   const forceRefresh = req.query['refresh'] === '1';
   const withAi = req.query['ai'] !== '0';
 
+  // Filtros: por padrão só o que está repercutindo, no máximo 18 pautas.
+  const viralParam = req.query['viral'];
+  const viralOnly = viralParam === '0' ? false : undefined;
+  const onlyViral = viralParam === '2';
+  const limitRaw = Number(req.query['limit']);
+  const minScoreRaw = Number(req.query['minScore']);
+
   try {
-    const radar = await buildRadar({ scope, forceRefresh, withAi });
+    const radar = await buildRadar({
+      scope,
+      forceRefresh,
+      withAi,
+      filters: {
+        viralOnly,
+        onlyViral,
+        limit: Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : undefined,
+        minScore: Number.isFinite(minScoreRaw) ? minScoreRaw : undefined,
+      },
+    });
     res.json({ radar: scope, ...radar });
   } catch (err) {
     res.status(502).json({

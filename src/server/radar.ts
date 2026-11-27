@@ -260,6 +260,35 @@ export function clusterArticles(articles: RadarArticle[]): RadarClusterItem[] {
   });
 }
 
+
+/**
+ * Viralidade do candidato: quantos veículos, países e idiomas falam do mesmo
+ * assunto e há quanto tempo. É o que separa "saiu em um site" de "está
+ * repercutindo no mundo" — a nota editorial da IA entra depois, como bônus.
+ */
+function viralOf(cluster: RadarClusterItem): NonNullable<RadarClusterItem['viral']> {
+  const { fontes, paises, idiomas, idadeHoras } = cluster.observed;
+  const velocidade = fontes / Math.max(1, idadeHoras + 1);
+
+  const score = Math.round(
+    40 * Math.min(1, fontes / 5) +
+      30 * Math.min(1, paises / 3) +
+      20 * Math.min(1, idiomas / 2) +
+      10 * Math.min(1, velocidade / 1.5),
+  );
+
+  const rotulo =
+    score >= 60
+      ? ('viralizando' as const)
+      : score >= 35
+        ? ('repercutindo' as const)
+        : score >= 18
+          ? ('emergente' as const)
+          : ('isolada' as const);
+
+  return { score, rotulo };
+}
+
 const SCORE_SCHEMA = {
   type: 'object',
   properties: {
@@ -418,36 +447,116 @@ Não invente fatos. Se a informação for fraca, dê nota baixa em confiabilidad
 }
 
 /** Radar completo: coleta, agrupa e (se possível) avalia. */
+export interface RadarFilters {
+  /** Prioriza o que está repercutindo (vem primeiro na lista). */
+  viralOnly: boolean;
+  /** Quando true, devolve SOMENTE as virais. */
+  onlyViral?: boolean;
+  /** Nota mínima final (0–100). */
+  minScore: number;
+  /** Quantas pautas devolver no máximo. */
+  limit: number;
+}
+
 export async function buildRadar(params: {
   scope: RadarScope;
   forceRefresh?: boolean;
   withAi?: boolean;
+  filters?: Partial<RadarFilters>;
 }): Promise<{
   items: RadarClusterItem[];
   aiAvailable: boolean;
   message?: string;
   generatedAt: string;
   feedErrors: number;
+  totalCandidates: number;
+  viralCount: number;
+  filters: RadarFilters;
 }> {
   const cache = await collectArticles(params.scope, Boolean(params.forceRefresh));
   const clusters = clusterArticles(cache.articles);
 
+  // Ordena já pelos sinais de repercussão: a IA avalia os melhores primeiro.
+  for (const cluster of clusters) {
+    cluster.viral = viralOf(cluster);
+  }
+
   let aiAvailable = false;
   let message: string | undefined;
   if (params.withAi !== false) {
-    const ai = await scoreClustersWithAi(clusters, params.scope);
+    const ai = await scoreClustersWithAi(
+      [...clusters].sort((a, b) => b.viral!.score - a.viral!.score || b.score - a.score),
+      params.scope,
+    );
     aiAvailable = ai.aiAvailable;
     message = ai.message;
   }
 
-  clusters.sort((a, b) => b.score - a.score);
+  // Nota final considerando a viralidade medida (sem IA ela ainda ordena).
+  for (const cluster of clusters) {
+    const viral = cluster.viral!.score;
+    // Viralidade é o critério principal: o usuário quer o que está pegando.
+    cluster.score = cluster.ai
+      ? Math.round(cluster.observed.score * 0.3 + cluster.ai.total * 0.3 + viral * 0.4)
+      : Math.round(cluster.observed.score * 0.45 + viral * 0.55);
+  }
+
+  const filters: RadarFilters = {
+    // Tendências: por padrão só o que repercutiu em mais de um lugar.
+    viralOnly: params.filters?.viralOnly ?? params.scope === 'tendencias',
+    minScore: params.filters?.minScore ?? 0,
+    limit: Math.max(1, Math.min(60, params.filters?.limit ?? 18)),
+  };
+
+  const isViral = (cluster: RadarClusterItem): boolean => {
+    const { fontes, paises } = cluster.observed;
+    // "Viral" = repercutiu em mais de um veículo ou em mais de um país.
+    return (fontes >= 2 || paises >= 2) && (cluster.viral?.score ?? 0) >= 30;
+  };
+
+  // Rótulo segue o mesmo critério: nada de chamar de "repercutindo" um item
+  // que só saiu em um veículo.
+  for (const cluster of clusters) {
+    if (!cluster.viral) continue;
+    const viral = cluster.viral.score;
+    cluster.viral = {
+      score: viral,
+      rotulo: isViral(cluster)
+        ? viral >= 55
+          ? 'viralizando'
+          : 'repercutindo'
+        : viral >= 18
+          ? 'emergente'
+          : 'isolada',
+    };
+  }
+
+  const scored = clusters.filter((cluster) => cluster.score >= filters.minScore);
+  const virais = scored.filter(isViral).sort((a, b) => b.score - a.score);
+  const emergentes = scored
+    .filter((cluster) => !isViral(cluster))
+    .sort((a, b) => b.score - a.score || (b.viral?.score ?? 0) - (a.viral?.score ?? 0));
+
+  // Prioriza as virais e completa com as emergentes: o usuário nunca fica com
+  // uma lista vazia num dia fraco, mas as que estão repercutindo vêm primeiro.
+  const visible = filters.viralOnly ? [...virais, ...emergentes] : [...virais, ...emergentes];
+  const viralCount = virais.length;
+
+  if (params.filters?.onlyViral) {
+    visible.splice(virais.length);
+  }
+
+  const totalCandidates = visible.length;
 
   return {
-    items: clusters,
+    items: visible.slice(0, filters.limit),
+    viralCount,
     aiAvailable,
     message,
     generatedAt: new Date().toISOString(),
     feedErrors: cache.feedErrors,
+    totalCandidates,
+    filters,
   };
 }
 

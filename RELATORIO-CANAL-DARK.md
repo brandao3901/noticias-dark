@@ -1584,3 +1584,37 @@ realmente fala** (preferindo uma com número), ignorando frases que também prom
 | Roteiro com essa análise | **auditoria aprovada**: gancho 9, densidade 8, ritmo 8, repetição 9, foco 10, **promessas 9**, desfecho 8 |
 | Notícia sem Radar | segue funcionando; formato/tom ficam com a IA |
 | Gancho promessa | reescrito para fato falado; promessas subiram de 4 para 9 |
+
+---
+
+## 32. Radar passa a priorizar o que é viral (27/11/2026)
+
+Problema relatado: *"está pegando todas as pautas, não as mais virais"*.
+
+### 32.1 O que mudou
+
+- **Viralidade medida** por pauta: `40% veículos + 30% países + 20% idiomas + 10% velocidade`
+  → rótulo `viralizando` (≥55), `repercutindo` (≥30 com 2+ fontes/países), `emergente`, `isolada`.
+- **Critério honesto**: só é "viral" quem apareceu em **2+ veículos ou 2+ países** —
+  um item de fonte única nunca recebe rótulo de repercussão.
+- **Peso na nota final**: 40% viralidade + 30% dados + 30% editorial (antes a IA mandava).
+- **Lista ordenada**: virais primeiro; as emergentes entram depois para preencher (dia fraco
+  não devolve lista vazia).
+- **Limite**: 18 pautas por padrão (`?limit=`), com `?viral=2` para **só virais** e
+  `?viral=0` para ver tudo.
+- **Interface**: cabeçalho mostra "**N viral(is)** no topo, X exibidas de Y", cada cartão traz
+  o rótulo de viralidade e a nota (ex.: `repercutindo · viralidade 50/100`), e há o botão
+  **Só virais**.
+
+### 32.2 Prova (execução real)
+
+| Consulta | Resultado |
+|---|---|
+| `tendencias&ai=0` | 18 exibidas de 80 · **2 virais** no topo · 0,9 s |
+| `tendencias` (com IA) | 18 de 80 · 1 viral · 5,8 s · IA avalia primeiro os mais virais |
+| `tendencias&viral=2` | só as virais |
+| `tendencias&viral=0` | todas as 80 |
+| `documental` | 18 de 80 (documental não usa o filtro viral) |
+
+Exemplo de topo: `repercutindo · viralidade 50/100` (2 fontes, 2 países) antes de itens de
+fonte única com nota editorial alta — exatamente a ordem que faltava.

@@ -55,6 +55,20 @@ import { StudioStore } from '../services/studio-store';
 
           <button
             type="button"
+            (click)="toggleOnlyViral()"
+            class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-xs"
+            [class.border-[#e59a38]]="onlyViral()"
+            [class.text-[#f0aa4b]]="onlyViral()"
+            [class.border-white/15]="!onlyViral()"
+            [class.text-slate-200]="!onlyViral()"
+            title="Mostrar somente o que está repercutindo em mais de um veículo ou país"
+          >
+            <mat-icon class="text-[16px]">filter_alt</mat-icon>
+            <span>Só virais</span>
+          </button>
+
+          <button
+            type="button"
             (click)="load(true)"
             [disabled]="loading()"
             class="inline-flex items-center gap-1 rounded border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-40"
@@ -66,7 +80,9 @@ import { StudioStore } from '../services/studio-store';
       </div>
 
       <p class="mt-2 text-[11px] text-slate-500">
-        {{ scopeHint() }} · {{ items().length }} pauta(s) · nota = 45% dados observados + 55% avaliação editorial
+        {{ scopeHint() }} · <strong class="text-slate-300">{{ viralCount() }} viral(is)</strong> no topo,
+        {{ items().length }} exibidas de {{ totalCandidates() }} ·
+        nota = dados observados + viralidade + avaliação editorial
         @if (!aiAvailable() && !loading()) {
           <span class="text-amber-300"> · IA indisponível: mostrando só os dados observados</span>
         }
@@ -95,6 +111,12 @@ import { StudioStore } from '../services/studio-store';
             </div>
 
             <h3 class="mt-2 text-sm font-semibold leading-snug text-slate-100">{{ item.title }}</h3>
+
+            @if (item.viral; as viral) {
+              <p class="mt-1 text-[10px]" [class]="viralClass(viral.rotulo)">
+                {{ viralLabel(viral.rotulo) }} · viralidade {{ viral.score }}/100
+              </p>
+            }
 
             @if (item.ai?.resumo) {
               <p class="mt-1 text-xs leading-relaxed text-slate-300">{{ item.ai?.resumo }}</p>
@@ -180,6 +202,9 @@ export class RadarView {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly aiAvailable = signal(false);
+  readonly onlyViral = signal(false);
+  readonly viralCount = signal(0);
+  readonly totalCandidates = signal(0);
   readonly producingId = signal<string | null>(null);
 
   readonly scopeHint = computed(() =>
@@ -205,6 +230,29 @@ export class RadarView {
     void this.load(false);
   }
 
+  toggleOnlyViral(): void {
+    this.onlyViral.update((value) => !value);
+    this.items.set([]);
+    void this.load(false);
+  }
+
+  viralLabel(rotulo: string): string {
+    const labels: Record<string, string> = {
+      viralizando: 'viralizando',
+      repercutindo: 'repercutindo',
+      emergente: 'emergente',
+      isolada: 'pouco repercutido',
+    };
+    return labels[rotulo] ?? rotulo;
+  }
+
+  viralClass(rotulo: string): string {
+    if (rotulo === 'viralizando') return 'text-emerald-300';
+    if (rotulo === 'repercutindo') return 'text-[#f0aa4b]';
+    if (rotulo === 'emergente') return 'text-slate-400';
+    return 'text-slate-500';
+  }
+
   async load(refresh: boolean): Promise<void> {
     this.loading.set(true);
     this.error.set(null);
@@ -212,11 +260,14 @@ export class RadarView {
     try {
       const params = new URLSearchParams({ radar: this.scope() });
       if (refresh) params.set('refresh', '1');
+      if (this.onlyViral()) params.set('viral', '2');
       const res = await fetch(`/api/radar?${params.toString()}`);
       const data = (await res.json()) as RadarResponse & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
 
       this.items.set(data.items ?? []);
+      this.viralCount.set(Number(data.viralCount) || 0);
+      this.totalCandidates.set(Number(data.totalCandidates) || 0);
       this.aiAvailable.set(Boolean(data.aiAvailable));
       if (!data.aiAvailable && data.message) this.error.set(data.message);
     } catch (err) {

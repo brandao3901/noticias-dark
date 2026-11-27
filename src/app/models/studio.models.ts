@@ -71,6 +71,11 @@ export interface RadarClusterItem {
     idadeHoras: number;
     score: number;
   };
+  /** Repercussão medida: quantos veículos/países/idiomas falam do assunto. */
+  viral?: {
+    score: number;
+    rotulo: 'viralizando' | 'repercutindo' | 'emergente' | 'isolada';
+  };
   /** Julgamento editorial da IA (separado do observado, de propósito). */
   ai?: {
     scores: RadarScores;
@@ -90,6 +95,11 @@ export interface RadarResponse {
   aiAvailable: boolean;
   message?: string;
   feedErrors: number;
+  /** Quantas pautas estão repercutindo (vêm primeiro na lista). */
+  viralCount: number;
+  /** Quantas sobraram depois dos filtros (antes do limite). */
+  totalCandidates: number;
+  filters: { viralOnly: boolean; minScore: number; limit: number };
   items: RadarClusterItem[];
 }
 
