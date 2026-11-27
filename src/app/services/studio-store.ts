@@ -366,6 +366,8 @@ export class StudioStore {
 
   readonly researchBusy = signal(false);
   readonly scriptBusy = signal(false);
+  /** Análise da pauta em andamento (Radar/Motor de Retenção). */
+  readonly rerunAnalysisBusy = signal(false);
   readonly mediaBusy = signal(false);
   readonly actionFeedback = signal<{ type: 'info' | 'warn' | 'error'; text: string } | null>(null);
 
@@ -848,10 +850,130 @@ export class StudioStore {
   /** Guarda a sugestão do Radar (formato, tom, técnicas e análise). */
   setPautaRadar(id: string, radar: PautaRecord['radar']): void {
     const nowIso = new Date().toISOString();
+    // A personalidade escolhida pela IA também define voz e visual da pauta;
+    // o usuário continua livre para trocar no Estúdio e QC.
+    const presets = this.radarPresets(radar);
+
     this.pautas.update((list) =>
-      list.map((p) => (p.id === id ? { ...p, radar, updatedAt: nowIso } : p)),
+      list.map((p) => {
+        if (p.id !== id) return p;
+        return {
+          ...p,
+          radar,
+          narration: {
+            ...p.narration,
+            ...(presets.style ? { style: presets.style } : {}),
+            ...(presets.rate ? { rate: presets.rate } : {}),
+            ...(presets.videoMode ? { videoMode: presets.videoMode } : {}),
+            ...(presets.motion ? { motion: presets.motion } : {}),
+          },
+          updatedAt: nowIso,
+        };
+      }),
     );
     this.persist();
+  }
+
+  /**
+   * Personalidade → voz e formato visual.
+   *
+   * Documentário/misterioso pedem ritmo mais lento e imagem parada; impactante
+   * pede urgência e cartões; explicativo pede tom didático.
+   */
+  private radarPresets(radar: PautaRecord['radar']): {
+    style?: string;
+    rate?: number;
+    videoMode?: 'fotos' | 'documento' | 'cards';
+    motion?: 'none' | 'kenburns';
+  } {
+    switch (radar?.personalidade) {
+      case 'documentario':
+        return { style: 'ancora', rate: 0.95, videoMode: 'documento', motion: 'none' };
+      case 'misterioso':
+        return { style: 'ancora', rate: 0.92, videoMode: 'documento', motion: 'none' };
+      case 'impactante':
+        return { style: 'urgente', rate: 1.06, videoMode: 'cards', motion: 'kenburns' };
+      case 'explicativo':
+        return { style: 'explicativo', rate: 1, videoMode: 'cards', motion: 'none' };
+      case 'jornalistico':
+        return { style: 'ancora', rate: 1, videoMode: 'fotos', motion: 'none' };
+      default:
+        return {};
+    }
+  }
+
+  /** Analisa a pauta com a IA e guarda formato, tom, fatos e ângulo. */
+  async analyzePautaWithAi(id: string): Promise<void> {
+    const target = this.pautas().find((p) => p.id === id);
+    if (!target) return;
+
+    const sources = target.dossier.sources.slice(0, 4);
+    this.rerunAnalysisBusy.set(true);
+    this.clearFeedback();
+
+    try {
+      const res = await firstValueFrom(
+        this.http.post<{
+          ok?: boolean;
+          analysis?: {
+            fatos?: string[];
+            incertos?: string[];
+            angulo?: string;
+            porqueInteressa?: string;
+            gancho?: string;
+            formato?: string;
+            personalidade?: string;
+            tecnicas?: string[];
+          };
+          error?: string;
+        }>('/api/radar/analyze', {
+          title: target.title,
+          category: target.editorial,
+          urls: sources.map((source) => source.url),
+          excerpts: sources.map((source) => source.excerpt).filter(Boolean),
+        }),
+      );
+
+      if (!res.ok || !res.analysis) {
+        this.actionFeedback.set({
+          type: 'warn',
+          text: res.error ?? 'Não foi possível analisar a pauta agora.',
+        });
+        return;
+      }
+
+      const FORMATOS = ['noticia', 'minidocumentario', 'curiosidade', 'investigativa', 'descoberta'];
+      const PERSONALIDADES = ['documentario', 'misterioso', 'impactante', 'explicativo', 'jornalistico'];
+      const formato = String(res.analysis.formato ?? '');
+      const personalidade = String(res.analysis.personalidade ?? '');
+
+      this.setPautaRadar(id, {
+        formato: (FORMATOS.includes(formato) ? formato : undefined) as never,
+        personalidade: (PERSONALIDADES.includes(personalidade) ? personalidade : undefined) as never,
+        tecnicas: res.analysis.tecnicas?.slice(0, 4),
+        analise: {
+          fatos: res.analysis.fatos?.slice(0, 6),
+          incertos: res.analysis.incertos?.slice(0, 6),
+          angulo: res.analysis.angulo,
+          gancho: res.analysis.gancho,
+          porqueInteressa: res.analysis.porqueInteressa,
+        },
+        score: target.radar?.score,
+        origem: target.radar?.origem,
+      });
+
+      this.actionFeedback.set({
+        type: 'info',
+        text: 'Pauta analisada: formato, tom, fatos e ângulo já estão no roteiro.',
+      });
+    } catch (err) {
+      this.actionFeedback.set({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Falha ao analisar a pauta.',
+      });
+    } finally {
+      this.rerunAnalysisBusy.set(false);
+    }
   }
 
   updatePautaTitle(id: string, title: string): void {

@@ -512,6 +512,33 @@ export async function runGeminiUrlContextAnalysis(
   }
 }
 
+
+/**
+ * Gancho que promete ("a verdade vai te frustrar", "você não vai acreditar")
+ * precisa ser entregue pela narração. Quando o modelo insiste em prometer mais
+ * do que o material sustenta, trocamos o gancho por uma frase que o vídeo
+ * realmente fala — assim a promessa é cumprida por construção.
+ */
+const PROMISE_HOOK =
+  /\b(a verdade|voc[eê] n[ãa]o vai|n[ãa]o vai acreditar|vai te|vai destruir|chocante|perturbador|arrepiante|inacredit[áa]vel)\b/i;
+
+function enforceFactualHook(script: EditableScript): EditableScript {
+  if (!PROMISE_HOOK.test(script.hook)) return script;
+
+  // Só frases factuais servem: a própria narração não pode repetir a promessa.
+  const frases = script.scenes
+    .flatMap((scene) => scene.narration.split(/(?<=[.!?])\s+/))
+    .map((frase) => frase.trim())
+    .filter((frase) => frase.length > 24 && !PROMISE_HOOK.test(frase));
+
+  const comNumero = frases.find((frase) => /\d/.test(frase));
+  const escolhida = comNumero ?? frases[0];
+  if (!escolhida) return script;
+
+  const hook = escolhida.split(/\s+/).slice(0, 14).join(' ').replace(/[.,;:]$/, '');
+  return { ...script, hook };
+}
+
 export async function generateStructuredShortScript(params: {
   title: string;
   editorial: string;
@@ -608,7 +635,9 @@ export async function generateStructuredShortScript(params: {
         ? `NÃO AFIRME COMO FATO (trate como em aberto): ${params.analysis.incertos.slice(0, 5).join('; ')}`
         : '',
       params.analysis?.angulo ? `ÂNGULO PREFERIDO: ${params.analysis.angulo}` : '',
-      params.analysis?.gancho ? `GANCHO SUGERIDO PELA ANÁLISE (pode melhorar, máx. 14 palavras): ${params.analysis.gancho}` : '',
+      params.analysis?.gancho
+        ? `GANCHO SUGERIDO PELA ANÁLISE (máx. 14 palavras): ${params.analysis.gancho}\nSe esse gancho fizer uma promessa ("a verdade vai...", "você não vai acreditar"), a narração PRECISA entregar exatamente essa promessa; se não houver material, suavize o gancho para um fato concreto.`
+        : '',
       ``,
       `Regras editoriais obrigatórias:`,
       `1. Utilize EXCLUSIVAMENTE fatos presentes nas fontes numeradas abaixo. Nunca invente números, datas, citações ou causas.`,
@@ -780,7 +809,7 @@ export async function generateStructuredShortScript(params: {
     }
 
     // ---- Auditoria de retenção (uma reescrita no máximo, por cota) --------
-    let script = toScript(raw, usedModel);
+    let script = enforceFactualHook(toScript(raw, usedModel));
     let audit: RetentionAudit | null = null;
     let rewritten = false;
 
@@ -826,7 +855,7 @@ export async function generateStructuredShortScript(params: {
 
         try {
           const retry = await requestScript(correction);
-          const retryScript = toScript(retry.raw, retry.usedModel);
+          const retryScript = enforceFactualHook(toScript(retry.raw, retry.usedModel));
           const retryAudit = await auditRetention({
             script: retryScript,
             analysis: params.analysis,

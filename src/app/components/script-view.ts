@@ -10,6 +10,85 @@ import { StudioStore, extractOrderedEntityNames } from '../services/studio-store
   template: `
     @if (store.activePauta(); as pauta) {
       <div class="space-y-6">
+        <!-- Análise da pauta: formato, tom, fatos e ângulo (Motor de Retenção) -->
+        <section class="rounded-xl border border-white/10 bg-[#111620] p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-semibold text-slate-100">Análise da pauta</h2>
+              <p class="mt-1 text-xs text-slate-400">
+                A IA investiga a pauta e decide o formato narrativo e o tom antes do roteiro.
+                Tudo o que aparece aqui é usado na geração.
+              </p>
+            </div>
+            <button
+              type="button"
+              (click)="store.analyzePautaWithAi(pauta.id)"
+              [disabled]="store.rerunAnalysisBusy() || store.scriptBusy()"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-2 text-xs text-slate-200 hover:bg-white/5 disabled:opacity-40"
+            >
+              <mat-icon class="text-[16px]">{{ store.rerunAnalysisBusy() ? 'hourglass_top' : 'travel_explore' }}</mat-icon>
+              <span>{{ store.rerunAnalysisBusy() ? 'Analisando…' : (pauta.radar?.analise ? 'Reanalisar' : 'Analisar pauta') }}</span>
+            </button>
+          </div>
+
+          @if (pauta.radar?.analise; as analise) {
+            <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+              @if (pauta.radar?.formato) {
+                <span class="rounded border border-white/15 px-1.5 py-0.5 text-slate-300">
+                  formato: {{ formatLabel(pauta.radar!.formato!) }}
+                </span>
+              }
+              @if (pauta.radar?.personalidade) {
+                <span class="rounded border border-white/15 px-1.5 py-0.5 text-slate-300">
+                  tom: {{ personalityLabel(pauta.radar!.personalidade!) }}
+                </span>
+              }
+              @for (tecnica of pauta.radar?.tecnicas ?? []; track tecnica) {
+                <span class="rounded bg-white/5 px-1.5 py-0.5 text-slate-400">{{ tecnica }}</span>
+              }
+            </div>
+
+            @if (analise.angulo) {
+              <p class="mt-3 text-sm leading-relaxed text-slate-200">
+                <span class="text-[#e59a38]">Ângulo:</span> {{ analise.angulo }}
+              </p>
+            }
+            @if (analise.gancho) {
+              <p class="mt-1 text-sm leading-relaxed text-slate-300">
+                <span class="text-[#e59a38]">Gancho sugerido:</span> {{ analise.gancho }}
+              </p>
+            }
+
+            <div class="mt-3 grid gap-3 md:grid-cols-2">
+              @if (analise.fatos?.length) {
+                <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                  <p class="text-[11px] font-semibold text-emerald-300">Fatos sustentados</p>
+                  <ul class="mt-1 space-y-1 text-[11px] leading-relaxed text-slate-300">
+                    @for (fato of analise.fatos; track fato) {
+                      <li>• {{ fato }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (analise.incertos?.length) {
+                <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                  <p class="text-[11px] font-semibold text-amber-300">Em aberto (não afirmar)</p>
+                  <ul class="mt-1 space-y-1 text-[11px] leading-relaxed text-slate-300">
+                    @for (item of analise.incertos; track item) {
+                      <li>• {{ item }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+            </div>
+          } @else {
+            <p class="mt-3 text-xs text-slate-500">
+              Sem análise ainda. Clique em <strong>Analisar pauta</strong> depois de reunir fontes no
+              dossiê — é isso que define formato, tom e ângulo do roteiro.
+            </p>
+          }
+        </section>
+
         <!-- Barra de Geração Gemini e Controle de Cota Gratuita -->
         <section class="rounded-xl border border-white/10 bg-[#111620] p-6">
           <div class="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 pb-4">

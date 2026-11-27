@@ -1540,3 +1540,47 @@ automaticamente (`format`, `personality`, `techniques`, `analysis` no `/api/gemi
 
 - Personalidade influenciando o **TTS** (estilo de fala) e o **formato visual**.
 - Etapa de análise visível na tela (hoje ela roda no "Produzir" e vai para o roteiro).
+
+---
+
+## 31. Personalidade na voz e no visual + análise na tela (27/11/2026)
+
+Fase 3 da spec, fechando o ciclo: Radar → análise → formato/tom → roteiro → voz/visual.
+
+### 31.1 Personalidade define voz e formato
+
+`setPautaRadar` (store) agora semeia a pauta quando o Radar/análise escolhe a personalidade:
+
+| Personalidade | Voz (estilo) | Velocidade | Formato visual | Movimento |
+|---|---|---|---|---|
+| documentário | âncora | 0,95 | documento | parado |
+| misterioso | âncora | 0,92 | documento | parado |
+| impactante | urgente | 1,06 | cartões | Ken Burns |
+| explicativo | explicativo | 1,00 | cartões | parado |
+| jornalístico | âncora | 1,00 | fotos | parado |
+
+O usuário continua livre para trocar no Estúdio e QC — isso é só o ponto de partida.
+
+### 31.2 Análise da pauta na tela
+
+Nova seção **"Análise da pauta"** no topo da aba Roteiro:
+
+- botão **Analisar pauta** (ou *Reanalisar*) → `POST /api/radar/analyze` com as fontes do dossiê;
+- mostra **formato**, **tom**, **técnicas**, **ângulo**, **gancho sugerido**, **fatos sustentados** (verde)
+  e **em aberto / não afirmar** (âmbar);
+- esses dados alimentam automaticamente a geração do roteiro.
+
+### 31.3 Gancho que promete é corrigido por código
+
+O modelo leve insistia em ganchos do tipo *"a verdade vai te frustrar"* sem entregar a promessa.
+Agora, antes da auditoria, `enforceFactualHook` troca esse gancho por **uma frase que a narração
+realmente fala** (preferindo uma com número), ignorando frases que também prometem.
+
+### 31.4 Prova final
+
+| Teste | Resultado |
+|---|---|
+| Análise de pauta (exoplaneta) | formato `descoberta`, tom `misterioso`, 3 técnicas, ângulo anti-hype — 1,7 s |
+| Roteiro com essa análise | **auditoria aprovada**: gancho 9, densidade 8, ritmo 8, repetição 9, foco 10, **promessas 9**, desfecho 8 |
+| Notícia sem Radar | segue funcionando; formato/tom ficam com a IA |
+| Gancho promessa | reescrito para fato falado; promessas subiram de 4 para 9 |
