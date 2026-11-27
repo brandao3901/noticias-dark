@@ -1867,3 +1867,34 @@ uma cerimônia fechada, sem imprensa" → prompt:
 | `DELETE /video` | 200, arquivo no `.trash`, `video-info` → `exists: false` |
 | restaurar do `.trash` | vídeo de 7,8 MB volta e a pauta responde normal |
 | prompt pela fala | contém `sancionou/cerimonia`, não contém `reajuste` |
+
+---
+
+## 39. App leve: render não come a máquina, interface simplificada (27/11/2026)
+
+Relato: *"travou novamente; coloque o botão de apagar por baixo e simplifique o app deixando mais leve"*.
+
+### 39.1 O que pesava
+
+| Peso | Correção |
+|---|---|
+| **FFmpeg pegando os 12 núcleos** | `-threads` e `-filter_threads` em **todas** as 7 chamadas: deixa **4 núcleos livres** (teto 8) para a interface |
+| **Ken Burns a 3× (3240×5760)** | voltou para **2×** (2160×3840) — a suavidade medida é a mesma e o custo cai |
+| Prévia com vídeo nas cenas | **Modo leve agora vem ligado** (sem `<video>` de prévia); desliga em `localStorage canal_dark_modo_leve=0` |
+| Histórico de jobs crescendo sem limite | teto de **30 jobs** na fila (resultados antigos saíam da memória do navegador) |
+| Aba escondida continuava recebendo SSE | conexão **pausa** com `visibilitychange` e volta ao focar |
+| 6 imagens carregando de imediato | `loading="lazy"` + `decoding="async"` |
+| Botão destrutivo no meio dos downloads | **"Apagar vídeo desta pauta"** desceu para a linha de baixo (`basis-full`) |
+
+### 39.2 Medição
+
+| Cenário | Antes | Depois |
+|---|---|---|
+| Render 3 cenas (21 s de vídeo) | ~12,7 s com todos os núcleos | **20,6 s** com 4 núcleos livres |
+| Cores ocupados pelo FFmpeg | 12/12 | **8/12** |
+
+O vídeo sai mais devagar — de propósito: o ganho é o app continuar respondendo enquanto renderiza.
+
+### 39.3 Observação honesta
+
+O 409 de "já existe vídeo" apareceu no meio dos testes e **funcionou**: sem `replaceExisting`, o render é recusado. Isso confirma que a proteção está no caminho real do cliente (`POST /api/render`).

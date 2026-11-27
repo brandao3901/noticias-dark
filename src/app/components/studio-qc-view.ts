@@ -378,7 +378,7 @@ import { NarrationVoicePicker } from './narration-voice-picker';
                       (click)="requestDeleteVideo()"
                       [disabled]="deletingVideo()"
                       title="Apaga o vídeo renderizado (vai para a lixeira do app)"
-                      class="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-50 whitespace-nowrap"
+                      class="basis-full mt-1 inline-flex items-center justify-start gap-1.5 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-50 whitespace-nowrap"
                     >
                       <mat-icon class="text-[15px]">delete_outline</mat-icon>
                       <span>{{ deletingVideo() ? 'Apagando…' : 'Apagar vídeo' }}</span>
@@ -619,6 +619,8 @@ import { NarrationVoicePicker } from './narration-voice-picker';
                 <div class="flex flex-wrap items-start gap-3">
                   @if (pauta.render?.thumbnailUrl || info?.thumbnailUrl) {
                     <img
+                      loading="lazy"
+                      decoding="async"
                       [src]="pauta.render?.thumbnailUrl || info?.thumbnailUrl"
                       alt="Capa do vídeo renderizado"
                       class="h-24 w-[54px] rounded border border-white/10 object-cover"
@@ -713,7 +715,7 @@ export class StudioQcView {
 
   /** Modo leve: sem vídeo de prévia (economiza memória em sessões longas). */
   readonly modoLeve = signal(
-    typeof localStorage !== 'undefined' && localStorage.getItem('canal_dark_modo_leve') === '1',
+    typeof localStorage === 'undefined' || localStorage.getItem('canal_dark_modo_leve') !== '0',
   );
 
   readonly approvalNoteControl = new FormControl('', { nonNullable: true });

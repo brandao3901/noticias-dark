@@ -110,6 +110,8 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
                   @for (asset of articleMedia(); track asset.id) {
                     <div class="flex items-center gap-2 rounded border border-white/10 bg-[#0a0d12] p-1.5">
                       <img
+                        loading="lazy"
+                        decoding="async"
                         [src]="asset.thumbUrl"
                         [alt]="asset.title"
                         referrerpolicy="no-referrer"
@@ -201,6 +203,8 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
                         @for (asset of assets; track asset.id; let idx = $index; let first = $first; let last = $last) {
                           <div class="flex items-center gap-2 rounded border border-white/10 bg-[#111620] p-1.5">
                             <img
+                              loading="lazy"
+                              decoding="async"
                               [src]="asset.thumbUrl"
                               [alt]="asset.title"
                               referrerpolicy="no-referrer"
@@ -388,6 +392,8 @@ import { StudioStore, getSceneMediaList } from '../services/studio-store';
                       >
                         <div class="relative aspect-video bg-black/40 overflow-hidden">
                           <img
+                            loading="lazy"
+                            decoding="async"
                             [src]="asset.thumbUrl"
                             [alt]="asset.title"
                             referrerpolicy="no-referrer"

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, copyFile, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cpus, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { AvatarExpression } from './avatar-svg';
@@ -14,6 +14,16 @@ import { renderDocumentPage } from './document-page';
 import { renderNewsCard, buildSceneBeats } from './news-card';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * O render roda no mesmo PC que a interface. Deixar o FFmpeg pegar todos os
+ * núcleos congela a janela — limitamos a codificação e os filtros para sobrar
+ * CPU. O vídeo sai alguns segundos mais devagar, mas o app continua respondendo.
+ */
+const FFMPEG_THREADS = String(
+  Math.max(2, Math.min(8, (cpus().length || 4) - 4)),
+);
+const FFMPEG_FILTER_THREADS = '2';
 
 /** O video final e sempre 30 fps; o envelope da boca usa essa taxa. */
 const FPS = 30;
@@ -145,7 +155,7 @@ function buildKenBurnsFilter(
   const centered = '(iw-iw/zoom)*0.5';
 
   // Entrada ampliada 2×: é o que elimina o passo de 1 px (tremor).
-  const upscale = ',scale=3240:5760:flags=lanczos';
+  const upscale = ',scale=2160:3840:flags=lanczos';
   const zoompan = (z: string, x: string, y: string): string =>
     `,zoompan=z='${z}':x='${x}':y='${y}':d=1:s=1080x1920:fps=${fps}`;
 
@@ -631,7 +641,7 @@ export async function renderVerticalShortMp4(params: {
             await execFileAsync(
               'ffmpeg',
               [
-                '-y',
+                '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
                 '-loop',
                 '1',
                 '-framerate',
@@ -658,7 +668,7 @@ export async function renderVerticalShortMp4(params: {
             await execFileAsync(
               'ffmpeg',
               [
-                '-y',
+                '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
                 '-f',
                 'lavfi',
                 '-t',
@@ -716,7 +726,7 @@ export async function renderVerticalShortMp4(params: {
           await execFileAsync(
             'ffmpeg',
             [
-              '-y',
+              '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
               '-loop',
               '1',
               '-framerate',
@@ -745,7 +755,7 @@ export async function renderVerticalShortMp4(params: {
           await execFileAsync(
             'ffmpeg',
             [
-              '-y',
+              '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
               '-f',
               'lavfi',
               '-t',
@@ -892,7 +902,7 @@ export async function renderVerticalShortMp4(params: {
           await execFileAsync('ffmpeg', ffmpegArgs, { timeout: 30_000 });
         } catch {
           const fallbackArgs = [
-            '-y',
+            '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
             ...(fallbackImg
               ? ['-loop', '1', '-framerate', '30', '-t', String(shotDur), '-i', fallbackImg]
               : ['-f', 'lavfi', '-t', String(shotDur), '-i', 'color=c=#0a0f18:s=1080x1920:r=30']),
@@ -1170,7 +1180,7 @@ export async function renderVerticalShortMp4(params: {
     };
 
     const buildFinalArgs = (includeLabel: boolean, includeAvatar: boolean): string[] => [
-      '-y',
+      '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
       '-f',
       'concat',
       '-safe',

@@ -49,6 +49,8 @@ export interface RenderJobView {
 export class RenderQueue {
   private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 
+  /** Teto do histórico: jobs antigos com resultado completo ficavam na memória. */
+  private static readonly MAX_JOBS = 30;
   readonly jobs = signal<RenderJobView[]>([]);
   readonly connected = signal(false);
 
@@ -73,6 +75,18 @@ export class RenderQueue {
       this.connect();
       // Sem isso, cada recarga do HMR dejá uma conexão SSE aberta acumulando
       // jobs na memória do navegador (causa de "Out of Memory" em sessão longa).
+      // Janela escondida: para de receber/exibir jobs (economiza CPU e memória).
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            this.source?.close();
+            this.source = null;
+          } else {
+            this.connect();
+          }
+        });
+      }
+
       this.destroyRef.onDestroy(() => {
         this.stopPolling();
         this.source?.close();
@@ -95,7 +109,7 @@ export class RenderQueue {
       source.addEventListener('jobs', (event) => {
         try {
           const payload = JSON.parse((event as MessageEvent).data) as { jobs?: RenderJobView[] };
-          this.jobs.set(payload.jobs ?? []);
+          this.jobs.set((payload.jobs ?? []).slice(0, RenderQueue.MAX_JOBS));
           this.connected.set(true);
         } catch {
           // Evento malformado: mantém o último estado conhecido.
