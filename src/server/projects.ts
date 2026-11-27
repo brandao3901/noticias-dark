@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { PautaRecord } from '../app/models/studio.models';
+import { ffmpegBin, ffprobeBin } from './ffmpeg-bin';
 
 const execFileAsync = promisify(execFile);
 
@@ -252,7 +253,7 @@ export async function listProjects(): Promise<ProjectSummary[]> {
 async function extractThumbnail(videoPath: string, thumbnailPath: string): Promise<boolean> {
   try {
     await execFileAsync(
-      'ffmpeg',
+      ffmpegBin(),
       [
         '-y',
         '-v',

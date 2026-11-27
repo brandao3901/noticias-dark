@@ -70,3 +70,10 @@ logs/
 
 # perfil/dados do electron
 .electron-data/
+
+# artefatos do executável portátil
+release/
+# artefatos do executável portátil
+build/portable/
+# artefatos do executável portátil
+CanalDarkData/

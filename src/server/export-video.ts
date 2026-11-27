@@ -6,12 +6,14 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { AvatarExpression } from './avatar-svg';
 import { buildAvatarOverlay, JAW_LEVELS } from './avatar-overlay';
-import { buildJawEnvelope, buildNarrationTrack } from './narration';
+import { buildJawEnvelope, buildNarrationTrack, defaultTtsEngine } from './narration';
+import { kokoroModelsReady } from './kokoro';
 import { WEB_USER_AGENT } from './http';
 import { validateSafePublicUrl } from './ssrf-guard';
 import { retimeSubtitles, buildKaraokeAss } from './subtitles';
 import { renderDocumentPage } from './document-page';
 import { renderNewsCard, buildSceneBeats } from './news-card';
+import { ffmpegBin, ffprobeBin } from './ffmpeg-bin';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +42,17 @@ export interface RenderSceneInput {
   narration?: string;
   avatarMode?: 'full' | 'pip' | 'hidden';
   avatarExpression?: AvatarExpression;
+}
+
+/**
+ * Motor de voz realmente usável neste PC.
+ *
+ * O portátil não leva os modelos do Kokoro: pedir Kokoro ali derrubaria o render
+ * inteiro. Nesse caso seguimos com o padrão (Gemini com chave, senão Edge).
+ */
+function engineEfetiva(pedido?: 'kokoro' | 'gemini' | 'edge'): 'kokoro' | 'gemini' | 'edge' | undefined {
+  if (pedido !== 'kokoro') return pedido;
+  return kokoroModelsReady() ? 'kokoro' : defaultTtsEngine();
 }
 
 export interface RenderNarrationOptions {
@@ -514,7 +527,7 @@ export async function renderVerticalShortMp4(params: {
               durationSec: scene.durationSec,
               narration: scene.narration,
             })),
-            engine: params.narration.engine,
+            engine: engineEfetiva(params.narration.engine),
             voice: params.narration.voice,
             style: params.narration.style,
             rate: params.narration.rate,
@@ -639,7 +652,7 @@ export async function renderVerticalShortMp4(params: {
             const pngPath = join(workDir, `card_${segIdx}.png`);
             await writeFile(pngPath, png);
             await execFileAsync(
-              'ffmpeg',
+              ffmpegBin(),
               [
                 '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
                 '-loop',
@@ -666,7 +679,7 @@ export async function renderVerticalShortMp4(params: {
             sceneVisuals[sceneIndex] = true;
           } catch {
             await execFileAsync(
-              'ffmpeg',
+              ffmpegBin(),
               [
                 '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
                 '-f',
@@ -724,7 +737,7 @@ export async function renderVerticalShortMp4(params: {
           const transition = `,fade=t=in:st=0:d=0.22:color=black,fade=t=out:st=${fadeOutStart}:d=0.16:color=black`;
           const filter = `${base}${zoom},fps=30${transition}`;
           await execFileAsync(
-            'ffmpeg',
+            ffmpegBin(),
             [
               '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
               '-loop',
@@ -753,7 +766,7 @@ export async function renderVerticalShortMp4(params: {
           sceneVisuals[sceneIndex] = true;
         } else {
           await execFileAsync(
-            'ffmpeg',
+            ffmpegBin(),
             [
               '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
               '-f',
@@ -899,7 +912,7 @@ export async function renderVerticalShortMp4(params: {
         );
 
         try {
-          await execFileAsync('ffmpeg', ffmpegArgs, { timeout: 30_000 });
+          await execFileAsync(ffmpegBin(), ffmpegArgs, { timeout: 30_000 });
         } catch {
           const fallbackArgs = [
             '-y', '-threads', FFMPEG_THREADS, '-filter_threads', FFMPEG_FILTER_THREADS,
@@ -927,7 +940,7 @@ export async function renderVerticalShortMp4(params: {
             '21',
             segPath,
           ];
-          await execFileAsync('ffmpeg', fallbackArgs, { timeout: 25_000 });
+          await execFileAsync(ffmpegBin(), fallbackArgs, { timeout: 25_000 });
         }
 
         if (segmentFiles.length === 0) firstCutSec = shotDur;
@@ -1221,7 +1234,7 @@ export async function renderVerticalShortMp4(params: {
 
     params.onProgress?.('render', 88, 'Renderizando o vídeo final…');
     try {
-      await execFileAsync('ffmpeg', buildFinalArgs(labelFontPresent && !cardsMode, true), {
+      await execFileAsync(ffmpegBin(), buildFinalArgs(labelFontPresent && !cardsMode, true), {
         cwd: workDir,
         timeout: 180_000,
       });
@@ -1230,7 +1243,7 @@ export async function renderVerticalShortMp4(params: {
       // com narracao e legenda em vez de abortar a exportacao.
       const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
       console.warn(`[export-video] passe final falhou (${detail.slice(0, 200)}); tentando sem faixa e avatar.`);
-      await execFileAsync('ffmpeg', buildFinalArgs(false, false), {
+      await execFileAsync(ffmpegBin(), buildFinalArgs(false, false), {
         cwd: workDir,
         timeout: 180_000,
       });

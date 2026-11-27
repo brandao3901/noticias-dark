@@ -110,6 +110,25 @@ function stopServer() {
   }
 }
 
+/**
+ * Pasta de dados do modo portátil.
+ *
+ * O executável portátil roda de uma pasta temporária, então gravar "ao lado do
+ * exe" perderia tudo ao fechar. O electron-builder entrega PORTABLE_EXECUTABLE_DIR
+ * (a pasta real do .exe): usamos ela quando dá para escrever; senão, o perfil.
+ */
+function dadosPortateis() {
+  const base = process.env['PORTABLE_EXECUTABLE_DIR']?.trim() || dirname(process.execPath);
+  const alvo = join(base, 'CanalDarkData');
+  try {
+    mkdirSync(alvo, { recursive: true });
+    writeFileSync(join(alvo, '.escrita-ok'), 'ok', 'utf8');
+    return alvo;
+  } catch {
+    return app.getPath('userData');
+  }
+}
+
 function startServer(port) {
   if (!existsSync(SERVER_ENTRY)) {
     throw new Error(
@@ -117,7 +136,9 @@ function startServer(port) {
     );
   }
 
-  const nodeBin = process.env['CANAL_DARK_NODE']?.trim() || 'node';
+  // No pacote não existe Node instalado: o próprio Electron roda como Node.
+  const usaNodeEmbutido = !process.env['CANAL_DARK_NODE']?.trim() && app.isPackaged;
+  const nodeBin = process.env['CANAL_DARK_NODE']?.trim() || (usaNodeEmbutido ? process.execPath : 'node');
   log(`subindo servidor em 127.0.0.1:${port}`);
 
   const child = spawn(nodeBin, [SERVER_ENTRY], {
@@ -127,6 +148,20 @@ function startServer(port) {
       PORT: String(port),
       HOST: '127.0.0.1',
       NODE_ENV: 'production',
+      // Roda o servidor com o Node do próprio Electron (portátil sem Node instalado).
+      ...(usaNodeEmbutido ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+      // FFmpeg que viaja junto no pacote; pasta gravável e config fora do temp do portátil.
+      ...(app.isPackaged
+        ? {
+            // Portátil: dados ao lado do .exe (ou no perfil, se não for gravável).
+            CANAL_DARK_PROJECTS_DIR: join(dadosPortateis(), 'projects'),
+            CANAL_DARK_CONFIG_PATH: join(dadosPortateis(), 'config.json'),
+            FFMPEG_BIN: join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe'),
+            FFPROBE_BIN: join(process.resourcesPath, 'ffmpeg', 'ffprobe.exe'),
+            CANAL_DARK_WORK_DIR: join(dadosPortateis(), 'render-tmp'),
+            CANAL_DARK_CONFIG_DIR: dadosPortateis(),
+          }
+        : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

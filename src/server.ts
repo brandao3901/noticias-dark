@@ -22,6 +22,7 @@ import {
   generateIllustration,
   illustrationToAsset,
   imageAiMode,
+  resolverScriptPython,
 } from './server/imagegen';
 import {
   mediaProviders,
@@ -145,7 +146,15 @@ const serverDistFolder = dirname(fileURLToPath(import.meta.url));
 const browserDistFolder = resolve(serverDistFolder, '../browser');
 
 try {
-  process.loadEnvFile?.();
+  // Em desenvolvimento o .env fica na raiz do projeto. No portátil ele mora ao
+  // lado do .exe (pasta de dados), indicada por CANAL_DARK_CONFIG_DIR.
+  const envPortatil = process.env['CANAL_DARK_CONFIG_DIR']?.trim();
+  if (envPortatil) {
+    const arquivo = resolve(envPortatil, '.env');
+    if (existsSync(arquivo)) process.loadEnvFile?.(arquivo);
+  } else {
+    process.loadEnvFile?.();
+  }
 } catch {
   // .env é opcional; variáveis de ambiente da plataforma continuam sendo usadas
 }
@@ -530,7 +539,7 @@ app.use('/api/ai-images', express.static(aiImagesDir(), { maxAge: '1h' }));
 app.get('/api/media/ai-status', (_req, res) => {
   res.json({
     mode: imageAiMode(),
-    nativeScriptReady: existsSync(join(process.cwd(), 'python', 'imagegen.py')),
+    nativeScriptReady: Boolean(resolverScriptPython('imagegen.py')),
   });
 });
 

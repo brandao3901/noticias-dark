@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { Resvg } from '@resvg/resvg-js';
 import type { AvatarExpression } from './avatar-svg';
 import { buildAvatarSvg } from './avatar-svg';
+import { ffmpegBin, ffprobeBin } from './ffmpeg-bin';
 
 const execFileAsync = promisify(execFile);
 
@@ -77,7 +78,7 @@ export async function buildAvatarOverlay(params: {
 
   const videoPath = join(params.workDir, 'avatar_overlay.mov');
   await execFileAsync(
-    'ffmpeg',
+    ffmpegBin(),
     [
       '-y',
       '-v',

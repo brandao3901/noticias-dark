@@ -86,6 +86,26 @@ export function buildIllustrationPrompt(params: {
   );
 }
 
+/**
+ * Onde está o sidecar Python.
+ *
+ * Em desenvolvimento fica em `python/` na raiz; no pacote portátil o
+ * electron-builder coloca em `resources/python` (uma pasta acima de `resources/app`).
+ */
+export function resolverScriptPython(nome: string): string | null {
+  const candidatos = [
+    process.env['CANAL_DARK_PYTHON_DIR']?.trim()
+      ? join(process.env['CANAL_DARK_PYTHON_DIR'].trim(), nome)
+      : null,
+    join(process.cwd(), 'python', nome),
+    join(process.cwd(), '..', 'python', nome),
+  ].filter((item): item is string => Boolean(item));
+  for (const candidato of candidatos) {
+    if (existsSync(candidato)) return candidato;
+  }
+  return null;
+}
+
 export function aiImagesDir(): string {
   return join(projectsRoot(), '.ai-images');
 }
@@ -130,9 +150,9 @@ async function runNativeGenerator(
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const execFileAsync = promisify(execFile);
-  const script = join(process.cwd(), 'python', 'imagegen.py');
+  const script = resolverScriptPython('imagegen.py');
 
-  if (!existsSync(script)) {
+  if (!script) {
     throw new Error('gerador nativo ausente: python/imagegen.py (instale com requirements-image.txt)');
   }
 

@@ -53,7 +53,8 @@ function findProjectRoot(): string {
 const ROOT = findProjectRoot();
 const PYTHON_BIN = process.env['PYTHON_BIN']?.trim() || 'python';
 const TTS_SCRIPT = join(ROOT, 'python', 'tts.py');
-const CONFIG_PATH = join(ROOT, 'config.json');
+// Portátil: a config do canal fica ao lado do .exe, não na pasta temporária.
+const CONFIG_PATH = process.env['CANAL_DARK_CONFIG_PATH']?.trim() || join(ROOT, 'config.json');
 const MODEL_PATH = join(ROOT, 'kokoro-v1.0.onnx');
 const VOICES_PATH = join(ROOT, 'voices-v1.0.bin');
 

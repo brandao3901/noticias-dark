@@ -17,19 +17,55 @@
     "listar": "node scripts/render-cli.mjs list",
     "app": "node scripts/app-launcher.mjs",
     "app:dev": "set CANAL_DARK_DEV_URL=http://localhost:3000&& node scripts/app-launcher.mjs",
-    "app:smoke": "node scripts/app-launcher.mjs --smoke"
+    "app:smoke": "node scripts/app-launcher.mjs --smoke",
+    "portatil": "npm run build && node scripts/preparar-portatil.mjs && electron-builder --win portable --x64"
   },
   "build": {
     "appId": "com.canaldark.studio",
     "productName": "Canal Dark",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "asar": false,
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
-    ]
+      "package.json",
+      "public/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/portable/ffmpeg",
+        "to": "ffmpeg"
+      },
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*.py"
+        ]
+      },
+      {
+        "from": "config.json",
+        "to": "config.json"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Canal-Dark-Portatil-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "Canal-Dark-Portatil-${version}.exe",
+      "unicode": true
+    }
   },
   "private": true,
   "dependencies": {

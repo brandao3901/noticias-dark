@@ -1898,3 +1898,45 @@ O vídeo sai mais devagar — de propósito: o ganho é o app continuar responde
 ### 39.3 Observação honesta
 
 O 409 de "já existe vídeo" apareceu no meio dos testes e **funcionou**: sem `replaceExisting`, o render é recusado. Isso confirma que a proteção está no caminho real do cliente (`POST /api/render`).
+
+---
+
+## 40. Executável portátil (27/11/2026)
+
+### 40.1 O que foi feito
+
+- **`scripts/preparar-portatil.mjs`**: copia FFmpeg + FFprobe + DLLs do sistema para
+  `build/portable/ffmpeg` (234,8 MB), que o electron-builder coloca em `resources/ffmpeg`.
+- **`src/server/ffmpeg-bin.ts`**: todas as chamadas passam a resolver o binário por
+  `FFMPEG_BIN`/`FFPROBE_BIN` (pacote) ou PATH (desenvolvimento).
+- **`electron/main.mjs`**: no pacote o servidor roda com o **Node do próprio Electron**
+  (`ELECTRON_RUN_AS_NODE`), sem exigir Node instalado; variáveis apontam FFmpeg, pasta de dados
+  (`CanalDarkData`, ao lado do .exe) e config.
+- **`src/server.ts`**: carrega `.env` de `CANAL_DARK_CONFIG_DIR` (portátil) ou da raiz (dev).
+- **`narration.ts` / `export-video.ts`**: pedir Kokoro sem os modelos agora **cai para o motor
+  padrão** (Gemini com chave, senão Edge) em vez de derrubar o render.
+- `package.json`: alvo `portable` + `extraResources` (ffmpeg, python, config.json); `asar: false`.
+
+### 40.2 Artefatos
+
+| Artefato | Tamanho | Estado |
+|---|---|---|
+| `release/CanalDark-Portatil/` (pasta) | 704 MB | **funciona** — abrir por `Canal Dark.lnk` (ou `.bat`) |
+| `release/Canal-Dark-Portatil-0.0.0.exe` (arquivo único) | 186,6 MB | criado, mas nesta máquina o stub **não repassa `--no-sandbox`** e fecha |
+
+### 40.3 Testes no portátil (execução real)
+
+| Teste | Resultado |
+|---|---|
+| Arranque | 5 processos, servidor em `127.0.0.1:3000` |
+| Interface | HTML de 27 KB servido |
+| API | `/api/media/providers` e `/api/config/status` (`geminiConfigured: true`) |
+| FFmpeg embutido | `ffmpeg version 9.1-full_build` |
+| **Render completo** | **done**, vídeo de 7,36 s gerado com voz Gemini e FFmpeg do pacote |
+| Python (Kokoro/IA local) | não incluído — voz local exige Python instalado |
+
+### 40.4 Limites
+
+- Voz local (Kokoro) e geração de imagem por IA **não viajam** no pacote: dependem de Python +
+  modelos. O portátil usa Gemini (chave no `.env` ao lado do .exe) ou Edge.
+- O `.exe` único precisa de `--no-sandbox` nesta máquina; a pasta resolve isso pelo atalho.

@@ -9,6 +9,7 @@ import { normalizeTextForPtBrSpeech } from '../app/services/pt-br-speech';
 import { activeTtsModel, synthesizeSpeechWithGemini } from './gemini';
 import { kokoroModelsReady, readChannelVoiceSync, readKokoroConfig, synthesizeKokoroWav } from './kokoro';
 import { projectsRoot } from './projects';
+import { ffmpegBin, ffprobeBin } from './ffmpeg-bin';
 
 const execFileAsync = promisify(execFile);
 
@@ -81,7 +82,8 @@ export function defaultTtsEngine(): TtsEngine {
   const configured = (process.env['TTS_ENGINE'] ?? '').trim().toLowerCase();
   if (configured === 'edge') return 'edge';
   if (configured === 'gemini') return 'gemini';
-  if (configured === 'kokoro') return 'kokoro';
+  // Só usa Kokoro se os modelos estiverem presentes (portátil pode não ter).
+  if (configured === 'kokoro' && kokoroModelsReady()) return 'kokoro';
   // Sem escolha explícita: Kokoro se os modelos estiverem na raiz; senão o que
   // já existia (Gemini com chave ou Edge).
   if (kokoroModelsReady()) return 'kokoro';
@@ -258,7 +260,7 @@ export async function decodeToPcm(
   sampleRate = NARRATION_SAMPLE_RATE,
 ): Promise<Buffer> {
   await execFileAsync(
-    'ffmpeg',
+    ffmpegBin(),
     [
       '-y',
       '-v',
