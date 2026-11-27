@@ -1494,3 +1494,49 @@ para não mexer nos filtros atuais.
 2. **Etapas 3–4 da criação** na interface: análise da pauta + escolha automática de formato
    visíveis antes do roteiro.
 3. **Personalidade** influenciando TTS (estilo) e formato visual (documento/cartões/fotos).
+
+---
+
+## 30. Motor de Retenção Psicológica (27/11/2026)
+
+Fase 2 da spec. Fica dentro do gerador de roteiro que já existia
+(`generateStructuredShortScript`), sem mexer no fluxo de notícias.
+
+### 30.1 Como funciona
+
+1. **Briefing de retenção** injetado no prompt:
+   - **formato narrativo** (notícia, minidocumentário, curiosidade, investigativa, descoberta) com a estrutura de cada um;
+   - **personalidade** (documentário, misterioso, impactante, explicativo, jornalístico) definindo tom e ritmo;
+   - **técnicas** (até 3): lacuna de curiosidade, quebra de expectativa, antecipação, recompensas progressivas, identificação pessoal — cada uma com instrução de *como aplicar*;
+   - permissão explícita para reorganizar a pauta, com **limites invioláveis**: não inventar fatos, não distorcer, não prometer o que não entrega.
+2. **Auditoria automática** (`auditRetention`): uma segunda chamada avalia 7 critérios (gancho, densidade, ritmo, repetição, foco, promessas, desfecho) e devolve problemas + instrução de correção.
+3. **Reescrita com nota**: até **2 tentativas**, cada uma recebendo os pontos fracos exatos (ex.: "ritmo 5/10, repetição 5/10"). Um roteiro novo só substitui o anterior se **cumprir melhor a promessa do gancho** — soma de notas não decide sozinha.
+4. **Entrega transparente**: o roteiro carrega `format`, `personality` e `retention { aprovado, notas, problemas, reescrito }`; a aba Roteiro mostra os chips *formato*, *tom* e **retenção aprovada / revisar** (com os problemas no tooltip).
+
+### 30.2 Regras editoriais novas no prompt
+
+- Gancho em pergunta só se a resposta for entregue até o fim; senão, fato de impacto.
+- **Fonte única/escassa** (menos de ~700 caracteres): proibido suspense — abre com fato concreto.
+- Nunca repetir o texto do gancho na primeira cena.
+
+### 30.3 Prova
+
+| Caso | Antes | Depois |
+|---|---|---|
+| Pauta com análise do Radar (formato/tom/gancho) | — | `format: minidocumentario`, `tom: misterioso`, gancho da análise, auditoria **aprovada** (gancho 9, promessas 10) em 3,8 s |
+| Notícia com fonte única (obituário) | gancho em pergunta, promessas 4/10 | gancho **fato**: "morreu aos 63 anos", **promessas 8/10**, 2 reescritas |
+| Notícia normal (1 fonte, sem Radar) | — | segue funcionando; formato/tom ficam com a IA |
+
+> A auditoria é deliberadamente dura: quando o material é fraco ela **reprova** e a
+> interface avisa "retenção: revisar", em vez de esconder o problema.
+
+### 30.4 Integração com o Radar
+
+`POST /api/radar/analyze` devolve formato, tom, técnicas, fatos e gancho; o botão
+**Produzir esta pauta** guarda isso em `pauta.radar` e o gerador de roteiro usa
+automaticamente (`format`, `personality`, `techniques`, `analysis` no `/api/gemini/script`).
+
+### 30.5 Próximo (fase 3)
+
+- Personalidade influenciando o **TTS** (estilo de fala) e o **formato visual**.
+- Etapa de análise visível na tela (hoje ela roda no "Produzir" e vai para o roteiro).

@@ -132,6 +132,34 @@ import { StudioStore, extractOrderedEntityNames } from '../services/studio-store
                 <span class="text-slate-400">Modelo: {{ script.modelUsed }}</span>
               </div>
 
+              @if (script.format || script.personality || script.retention) {
+                <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                  @if (script.format) {
+                    <span class="rounded border border-white/15 px-1.5 py-0.5 text-slate-300">
+                      formato: {{ formatLabel(script.format) }}
+                    </span>
+                  }
+                  @if (script.personality) {
+                    <span class="rounded border border-white/15 px-1.5 py-0.5 text-slate-300">
+                      tom: {{ personalityLabel(script.personality) }}
+                    </span>
+                  }
+                  @if (script.retention; as retention) {
+                    <span
+                      class="rounded px-1.5 py-0.5"
+                      [class.bg-emerald-500/15]="retention.aprovado"
+                      [class.text-emerald-300]="retention.aprovado"
+                      [class.bg-amber-500/15]="!retention.aprovado"
+                      [class.text-amber-200]="!retention.aprovado"
+                      [title]="retention.problemas.join(' · ')"
+                    >
+                      {{ retention.aprovado ? 'retenção aprovada' : 'retenção: revisar' }}
+                      @if (retention.reescrito) { · reescrito }
+                    </span>
+                  }
+                </div>
+              }
+
               <div class="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
@@ -464,5 +492,28 @@ export class ScriptView {
         .map((item, idx) => ({ ...item, order: idx + 1 }));
       return { ...sc, scenes: remaining };
     });
+  }
+
+  /** Rótulos do Motor de Retenção (formato e tom). */
+  formatLabel(format: string): string {
+    const labels: Record<string, string> = {
+      noticia: 'notícia',
+      minidocumentario: 'minidocumentário',
+      curiosidade: 'curiosidade explicativa',
+      investigativa: 'história investigativa',
+      descoberta: 'narrativa de descoberta',
+    };
+    return labels[format] ?? format;
+  }
+
+  personalityLabel(personality: string): string {
+    const labels: Record<string, string> = {
+      documentario: 'documentário',
+      misterioso: 'misterioso',
+      impactante: 'impactante',
+      explicativo: 'explicativo',
+      jornalistico: 'jornalístico',
+    };
+    return labels[personality] ?? personality;
   }
 }

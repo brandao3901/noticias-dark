@@ -845,6 +845,15 @@ export class StudioStore {
     }
   }
 
+  /** Guarda a sugestão do Radar (formato, tom, técnicas e análise). */
+  setPautaRadar(id: string, radar: PautaRecord['radar']): void {
+    const nowIso = new Date().toISOString();
+    this.pautas.update((list) =>
+      list.map((p) => (p.id === id ? { ...p, radar, updatedAt: nowIso } : p)),
+    );
+    this.persist();
+  }
+
   updatePautaTitle(id: string, title: string): void {
     this.pautas.update((list) =>
       list.map((p) =>

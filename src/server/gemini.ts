@@ -3,11 +3,160 @@ import type {
   DossierSourceItem,
   EditableScript,
   GeminiUrlContextResult,
+  RadarFormat,
+  RadarPersonality,
   ScriptVersionMode,
 } from '../app/models/studio.models';
 import { isSocialXHost } from './ssrf-guard';
 
 const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
+
+// ---------------------------------------------------------------------------
+// Motor de Retenção Psicológica
+// ---------------------------------------------------------------------------
+
+/** Estrutura de cada formato narrativo (a IA escolhe um; o usuário pode trocar). */
+const FORMAT_GUIDES: Record<RadarFormat, string> = {
+  noticia:
+    'Notícia: fato → consequência → por que importa. Frases curtas, presente do indicativo, sem rodeio.',
+  minidocumentario:
+    'Minidocumentário: abra numa cena concreta → contexto mínimo → 2 revelações no meio → fecho que amarra a história.',
+  curiosidade:
+    'Curiosidade explicativa: pergunta intrigante → o que a maioria acredita (e está errado) → o mecanismo real → aplicação no cotidiano.',
+  investigativa:
+    'História investigativa: pista inicial → o que se sabia → o que mudou → o que ainda não se sabe. Nunca acuse sem fonte.',
+  descoberta:
+    'Narrativa de descoberta: achado surpreendente → como foi encontrado → o que muda com isso → pergunta em aberto.',
+};
+
+/** Personalidade: tom, ritmo e sugestões visuais. */
+const PERSONALITY_GUIDES: Record<RadarPersonality, string> = {
+  documentario:
+    'Tom documental cinematográfico: imagens amplas, frases com peso, ritmo médio, sem exclamações.',
+  misterioso:
+    'Tom misterioso: revele aos poucos, entregue a conclusão só no fim, sem exagerar no suspense.',
+  impactante:
+    'Tom impactante e dinâmico: abra no fato mais forte, frases muito curtas, números em destaque.',
+  explicativo:
+    'Tom explicativo: analogias do cotidiano, zero jargão sem tradução, uma ideia por frase.',
+  jornalistico:
+    'Tom jornalístico: isenção, atribuição explícita ("segundo..."), presente, sem adjetivo opinativo.',
+};
+
+/** Técnicas: como aplicar, não só o nome. */
+const TECHNIQUE_GUIDES: Record<string, string> = {
+  'lacuna de curiosidade':
+    'Abra uma pergunta concreta no gancho e responda só no terço final — a resposta tem de ser entregue.',
+  'quebra de expectativa':
+    'Diga o que a maioria imagina e mostre por que está errado, com o dado da fonte.',
+  antecipacao: 'Anuncie que existe um detalhe decisivo e pague essa promessa em até duas cenas.',
+  'recompensas progressivas':
+    'Uma informação nova e concreta por cena; nunca duas explicações seguidas sem fato.',
+  'identificacao pessoal':
+    'Ligue o assunto a algo que o espectador vive (tempo, dinheiro, corpo, rotina) em uma frase, sem moralismo.',
+};
+
+export interface RetentionAnalysisInput {
+  fatos?: string[];
+  incertos?: string[];
+  angulo?: string;
+  gancho?: string;
+  porqueInteressa?: string;
+}
+
+export interface RetentionAudit {
+  aprovado: boolean;
+  notas: Record<string, number>;
+  problemas: string[];
+  correcao: string;
+}
+
+const RETENTION_AUDIT_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    aprovado: { type: Type.BOOLEAN },
+    notas: {
+      type: Type.OBJECT,
+      properties: {
+        gancho: { type: Type.INTEGER },
+        densidade: { type: Type.INTEGER },
+        ritmo: { type: Type.INTEGER },
+        repeticao: { type: Type.INTEGER },
+        foco: { type: Type.INTEGER },
+        promessas: { type: Type.INTEGER },
+        desfecho: { type: Type.INTEGER },
+      },
+      required: ['gancho', 'densidade', 'ritmo', 'repeticao', 'foco', 'promessas', 'desfecho'],
+    },
+    problemas: { type: Type.ARRAY, items: { type: Type.STRING } },
+    correcao: { type: Type.STRING },
+  },
+  required: ['aprovado', 'notas', 'problemas', 'correcao'],
+};
+
+/**
+ * Auditoria de retenção: julga o roteiro pronto antes de entregar ao usuário.
+ *
+ * Nunca reescreve por conta própria — devolve problemas e uma instrução de
+ * correção; quem decide reescrever é o gerador (uma única vez, por cota).
+ */
+async function auditRetention(params: {
+  script: EditableScript;
+  analysis?: RetentionAnalysisInput;
+  facts: string;
+}): Promise<RetentionAudit | null> {
+  const narracao = params.script.scenes.map((scene, index) => `${index + 1}. ${scene.narration}`).join('\n');
+
+  const result = await runGeminiJson<{
+    aprovado: boolean;
+    notas: Record<string, number>;
+    problemas: string[];
+    correcao: string;
+  }>({
+    prompt: `Você audita retenção de um Short antes da publicação. Seja rigoroso e específico.
+
+GANCHO: ${params.script.hook}
+NARRAÇÃO:
+${narracao}
+FECHAMENTO: ${params.script.closing}
+
+FATOS QUE A FONTE SUSTENTA:
+${params.facts || '(sem lista)'}
+
+${params.analysis?.incertos?.length ? `PONTOS INCERTOS (não podem virar afirmação): ${params.analysis.incertos.join('; ')}` : ''}
+
+Dê nota de 0 a 10 para:
+- gancho: os primeiros 2 segundos despertam curiosidade real?
+- densidade: há informação concreta ao longo do vídeo (não só enrolação)?
+- ritmo: existe trecho lento ou frase que não acrescenta?
+- repeticao: 10 = nada repetido; 0 = repete a mesma ideia
+- foco: o vídeo mantém um assunto só?
+- promessas: 10 = tudo que o gancho prometeu foi entregue
+- desfecho: o fim conclui de forma satisfatória (não corta no ar)?
+
+Regras:
+- Se o gancho prometer algo que a narração não entrega, reprove em "promessas".
+- Se houver afirmação sem apoio nos fatos acima, reprove e aponte.
+- aprovado = true só se promessas >= 7, gancho >= 6 e a média >= 6.
+- correcao: instrução curta e acionável para o reescritor (o que mudar, sem mudar fatos).`,
+    schema: RETENTION_AUDIT_SCHEMA,
+    temperature: 0.2,
+  });
+
+  if (!result.ok || !result.data) return null;
+
+  const notas: Record<string, number> = {};
+  for (const [key, value] of Object.entries(result.data.notas ?? {})) {
+    notas[key] = Math.max(0, Math.min(10, Math.round(Number(value) || 0)));
+  }
+
+  return {
+    aprovado: Boolean(result.data.aprovado),
+    notas,
+    problemas: (result.data.problemas ?? []).slice(0, 6).map(String),
+    correcao: String(result.data.correcao ?? '').slice(0, 400),
+  };
+}
 
 /**
  * Resolvido em tempo de execucao, nao no topo do modulo: `src/server.ts` carrega
@@ -369,6 +518,16 @@ export async function generateStructuredShortScript(params: {
   mode: ScriptVersionMode;
   sources: DossierSourceItem[];
   geminiContextSummary?: string;
+  /** Formato narrativo escolhido (Radar/análise). Sem isso, a IA decide. */
+  format?: RadarFormat;
+  /** Personalidade: tom, ritmo e sugestões visuais. */
+  personality?: RadarPersonality;
+  /** Técnicas de retenção a aplicar (máx. 3). */
+  techniques?: string[];
+  /** Análise da pauta (fatos, incertezas, ângulo, gancho sugerido). */
+  analysis?: RetentionAnalysisInput;
+  /** false desliga a auditoria (padrão: ligada). */
+  retention?: boolean;
 }): Promise<{
   status: 'ok' | 'unconfigured' | 'quota_paused' | 'error';
   script?: EditableScript;
@@ -424,22 +583,58 @@ export async function generateStructuredShortScript(params: {
       `Editoria: ${params.editorial}. Assunto base: "${params.title}".`,
       `EXTENSÃO OBRIGATÓRIA: ${sceneGuide}. Narração com menos de ${MIN_WORDS} palavras é inválida.`,
       ``,
+      `=== MOTOR DE RETENÇÃO (obrigatório) ===`,
+      params.format
+        ? `FORMATO NARRATIVO: ${FORMAT_GUIDES[params.format]}`
+        : `FORMATO NARRATIVO: escolha o que melhor serve a história entre ${Object.keys(FORMAT_GUIDES).join(', ')} e siga a estrutura dele.`,
+      params.personality
+        ? `TOM: ${PERSONALITY_GUIDES[params.personality]}`
+        : `TOM: escolha entre ${Object.keys(PERSONALITY_GUIDES).join(', ')}.`,
+      (params.techniques?.length
+        ? params.techniques.slice(0, 3)
+        : ['lacuna de curiosidade', 'recompensas progressivas']
+      )
+        .map((tech) => `- ${tech}: ${TECHNIQUE_GUIDES[tech] ?? 'aplique com naturalidade.'}`)
+        .join('\n'),
+      `Você pode reorganizar a pauta (começar pelo fato mais surpreendente, alterar a ordem cronológica, antecipar uma revelação).`,
+      `LIMITES INVIOLÁVEIS: não invente fatos, números, datas ou citações; não distorça o que a fonte diz; não prometa no gancho algo que a narração não entrega.`,
+      params.analysis?.fatos?.length
+        ? `FATOS SUSTENTADOS PELA ANÁLISE (use, não invente além):\n${params.analysis.fatos
+            .slice(0, 6)
+            .map((fato) => `- ${fato}`)
+            .join('\n')}`
+        : '',
+      params.analysis?.incertos?.length
+        ? `NÃO AFIRME COMO FATO (trate como em aberto): ${params.analysis.incertos.slice(0, 5).join('; ')}`
+        : '',
+      params.analysis?.angulo ? `ÂNGULO PREFERIDO: ${params.analysis.angulo}` : '',
+      params.analysis?.gancho ? `GANCHO SUGERIDO PELA ANÁLISE (pode melhorar, máx. 14 palavras): ${params.analysis.gancho}` : '',
+      ``,
       `Regras editoriais obrigatórias:`,
       `1. Utilize EXCLUSIVAMENTE fatos presentes nas fontes numeradas abaixo. Nunca invente números, datas, citações ou causas.`,
       `2. Cada cena deve listar em sourceIds apenas os IDs exatos das fontes que sustentam as afirmações daquela cena.`,
-      `3. Apresente o fato principal logo no gancho inicial e explique por que importa, sem sensacionalismo nem suspense enganoso.`,
+      `3. O gancho pode abrir uma pergunta (curiosidade), mas sem enganar: o que ele promete é respondido no vídeo.`,
       `4. Se houver apenas uma fonte ou pontos em aberto, registre claramente em uncertaintyNote e na narração.`,
       `5. Forneça termos de busca visual em português (visualQueryPt) e inglês (visualQueryEn) para acervos gratuitos (Wikimedia Commons / Internet Archive).`,
       `6. GANCHO (hook): no máximo 14 palavras — pergunta direta ou fato de impacto. A PRIMEIRA cena começa pelo hook, sem contextualização formal ("o ator fez um balanço..." é proibido).`,
       `7. FECHAMENTO (closing): uma pergunta curta e direta ao público, convidando a comentar (ex.: "Você acha que ele deve continuar nas novelas?").`,
       `8. Título sugerido: no máximo 90 caracteres, com o fato principal; sem "clique", sem caixa alta.`,
       `9. Sem chamadas de áudio/vídeo ("veja o vídeo", "assista"), sem "inscreva-se" dentro da narração — isso vai na tela, não na locução.`,
+      `10. Cada cena entrega uma informação nova; nada de repetir a anterior com outras palavras.`,
+      `11. Se o gancho for pergunta, a resposta precisa aparecer explicitamente até a última cena. Se a fonte não permite responder, use um fato de impacto no gancho em vez de pergunta.`,
+      `12. Nunca repita o texto do gancho palavra por palavra na primeira cena: complemente-o.`,
+      params.sources.length <= 1 ||
+      params.sources.reduce((total, source) => total + (source.excerpt?.length ?? 0), 0) < 700
+        ? `13. FONTE ÚNICA/ESCASSA: não há material para suspense. Abra com um FATO concreto (não pergunta) e use o fechamento para a pergunta ao público.`
+        : '',
       ``,
       correction ? `CORREÇÃO NECESSÁRIA: ${correction}\n` : '',
       params.geminiContextSummary ? `Síntese URL Context: ${params.geminiContextSummary}\n` : '',
       `=== DOSSIÊ DE FONTES PERMITIDAS ===`,
       evidenceBlock,
-    ].join('\n');
+    ]
+      .filter((line) => line !== '')
+      .join('\n');
 
   const scriptConfig = {
     systemInstruction:
@@ -584,7 +779,90 @@ export async function generateStructuredShortScript(params: {
       }
     }
 
-    return { status: 'ok', script: toScript(raw, usedModel) };
+    // ---- Auditoria de retenção (uma reescrita no máximo, por cota) --------
+    let script = toScript(raw, usedModel);
+    let audit: RetentionAudit | null = null;
+    let rewritten = false;
+
+    if (params.retention !== false) {
+      const facts = [
+        ...(params.analysis?.fatos ?? []),
+        ...params.sources.slice(0, 4).map((s) => `${s.title}: ${s.excerpt.slice(0, 220)}`),
+      ].join('\n');
+
+      audit = await auditRetention({ script, analysis: params.analysis, facts });
+
+      const weakPoints = (notes: RetentionAudit['notas']): string[] =>
+        Object.entries(notes)
+          .filter(([, value]) => value < 7)
+          .sort((a, b) => a[1] - b[1])
+          .map(([key, value]) => `${key} ${value}/10`);
+
+      const needsWork = (notes: RetentionAudit['notas']): boolean =>
+        (notes['promessas'] ?? 10) < 7 || (notes['gancho'] ?? 10) < 6 || (notes['ritmo'] ?? 10) < 6;
+
+      const scoreOf = (notes: RetentionAudit['notas']): number =>
+        Object.values(notes).reduce((sum, value) => sum + value, 0);
+
+      let best = { script, audit, score: audit ? scoreOf(audit.notas) : 0 };
+
+      // Até duas tentativas: cada uma recebe os pontos fracos exatos da auditoria.
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        if (!best.audit || !needsWork(best.audit.notas)) break;
+
+        const weak = weakPoints(best.audit.notas);
+        const promessaFalhou = (best.audit.notas['promessas'] ?? 10) < 7;
+        const correction = [
+          promessaFalhou
+            ? 'O gancho promete algo que a narração não entrega. Troque o gancho por uma AFIRMAÇÃO de fato concreto da fonte (sem pergunta) e deixe a pergunta para o fechamento.'
+            : '',
+          best.audit.correcao,
+          weak.length ? `Pontos mais fracos: ${weak.join(', ')}.` : '',
+          best.audit.problemas.length ? `Problemas: ${best.audit.problemas.join('; ')}.` : '',
+          'Se o gancho é uma pergunta, responda-a explicitamente na narração ou troque por um fato de impacto que a fonte sustenta. Mantenha exatamente os mesmos fatos e fontes; reestruture só para prender e entregar o que o gancho promete.',
+        ]
+          .filter(Boolean)
+          .join(' ');
+
+        try {
+          const retry = await requestScript(correction);
+          const retryScript = toScript(retry.raw, retry.usedModel);
+          const retryAudit = await auditRetention({
+            script: retryScript,
+            analysis: params.analysis,
+            facts,
+          });
+
+          const retryScore = retryAudit ? scoreOf(retryAudit.notas) : 0;
+          if (retryAudit && retryScore > best.score) {
+            best = { script: retryScript, audit: retryAudit, score: retryScore };
+            rewritten = true;
+          }
+        } catch {
+          // Falhou a tentativa: fica com a melhor versão auditada até aqui.
+          break;
+        }
+      }
+
+      script = best.script;
+      audit = best.audit;
+    }
+
+    return {
+      status: 'ok',
+      script: {
+        ...script,
+        format: params.format,
+        personality: params.personality,
+        retention: {
+          tecnicas: params.techniques?.slice(0, 3) ?? [],
+          aprovado: audit?.aprovado ?? false,
+          notas: audit?.notas ?? {},
+          problemas: audit?.problemas ?? [],
+          reescrito: rewritten,
+        },
+      },
+    };
   } catch (err) {
     if (isQuotaOrRateError(err)) {
       quotaPausedUntilMs = Date.now() + 60 * 1000;

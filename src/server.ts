@@ -443,12 +443,43 @@ app.post('/api/gemini/script', async (req, res) => {
     return;
   }
 
+  // Motor de Retenção: formato, tom e técnicas podem vir do Radar/análise.
+  const FORMATOS = ['noticia', 'minidocumentario', 'curiosidade', 'investigativa', 'descoberta'];
+  const PERSONALIDADES = ['documentario', 'misterioso', 'impactante', 'explicativo', 'jornalistico'];
+  const rawFormat = typeof req.body?.format === 'string' ? req.body.format : '';
+  const rawPersonality = typeof req.body?.personality === 'string' ? req.body.personality : '';
+  const rawTechniques = Array.isArray(req.body?.techniques)
+    ? (req.body.techniques as unknown[]).filter((v): v is string => typeof v === 'string').slice(0, 3)
+    : undefined;
+  const rawAnalysis =
+    req.body?.analysis && typeof req.body.analysis === 'object'
+      ? (req.body.analysis as Record<string, unknown>)
+      : undefined;
+
   const result = await generateStructuredShortScript({
     title,
     editorial,
     mode,
     sources,
     geminiContextSummary,
+    format: FORMATOS.includes(rawFormat) ? (rawFormat as never) : undefined,
+    personality: PERSONALIDADES.includes(rawPersonality) ? (rawPersonality as never) : undefined,
+    techniques: rawTechniques,
+    analysis: rawAnalysis
+      ? {
+          fatos: Array.isArray(rawAnalysis['fatos'])
+            ? (rawAnalysis['fatos'] as string[]).slice(0, 6)
+            : undefined,
+          incertos: Array.isArray(rawAnalysis['incertos'])
+            ? (rawAnalysis['incertos'] as string[]).slice(0, 6)
+            : undefined,
+          angulo: typeof rawAnalysis['angulo'] === 'string' ? rawAnalysis['angulo'] : undefined,
+          gancho: typeof rawAnalysis['gancho'] === 'string' ? rawAnalysis['gancho'] : undefined,
+          porqueInteressa:
+            typeof rawAnalysis['porqueInteressa'] === 'string' ? rawAnalysis['porqueInteressa'] : undefined,
+        }
+      : undefined,
+    retention: req.body?.retention !== false,
   });
 
   res.json(result);

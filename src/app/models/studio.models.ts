@@ -252,6 +252,18 @@ export interface EditableScript {
   lastEditedAt: string;
   isDemoScript?: boolean;
   promptNoticeAccepted: boolean;
+  /** Formato narrativo aplicado pelo Motor de Retenção. */
+  format?: RadarFormat;
+  /** Personalidade (tom/ritmo) aplicada. */
+  personality?: RadarPersonality;
+  /** Resultado da auditoria de retenção feita antes de entregar o roteiro. */
+  retention?: {
+    tecnicas: string[];
+    aprovado: boolean;
+    notas: Record<string, number>;
+    problemas: string[];
+    reescrito: boolean;
+  };
 }
 
 export interface NarrationState {
@@ -311,6 +323,21 @@ export interface PautaRecord {
   dossier: DossierEvidence;
   script?: EditableScript;
   narration: NarrationState;
+  /** Sugestão vinda do Radar Global (formato, tom, técnicas e análise). */
+  radar?: {
+    formato?: RadarFormat;
+    personalidade?: RadarPersonality;
+    tecnicas?: string[];
+    analise?: {
+      fatos?: string[];
+      incertos?: string[];
+      angulo?: string;
+      gancho?: string;
+      porqueInteressa?: string;
+    };
+    score?: number;
+    origem?: string;
+  };
   qc?: QcReport;
   approvalNote: string;
   approvedAt?: string;

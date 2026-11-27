@@ -3,6 +3,8 @@ import { MatIconModule } from '@angular/material/icon';
 import type {
   EditorialCategory,
   RadarClusterItem,
+  RadarFormat,
+  RadarPersonality,
   RadarResponse,
   RadarScope,
 } from '../models/studio.models';
@@ -258,14 +260,72 @@ export class RadarView {
     if (!first || this.producingId()) return;
 
     this.producingId.set(item.id);
+    this.error.set(null);
     try {
+      // Etapa 3 da criação: análise da pauta antes de produzir.
+      let analysis: Record<string, unknown> | undefined;
+      try {
+        const res = await fetch('/api/radar/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: item.title,
+            category: item.category,
+            urls: item.articles.map((article) => article.url).slice(0, 4),
+            excerpts: item.articles.map((article) => article.excerpt).filter(Boolean).slice(0, 4),
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { analysis?: Record<string, unknown> };
+          analysis = data.analysis;
+        }
+      } catch {
+        // Sem análise o fluxo continua: o roteiro usa só o dossiê.
+      }
+
       const created = await this.store.addPauta({
         url: first.url,
         title: item.title,
         editorial: this.editorialFor(item.category),
         researchNow: true,
       });
-      if (created) this.created.emit();
+      if (!created) return;
+
+      const FORMATOS: RadarFormat[] = ['noticia', 'minidocumentario', 'curiosidade', 'investigativa', 'descoberta'];
+      const PERSONALIDADES: RadarPersonality[] = ['documentario', 'misterioso', 'impactante', 'explicativo', 'jornalistico'];
+      const formatoBruto = String(analysis?.['formato'] ?? item.ai?.formato ?? '');
+      const personalidadeBruta = String(analysis?.['personalidade'] ?? item.ai?.personalidade ?? '');
+      const formato = FORMATOS.includes(formatoBruto as RadarFormat) ? (formatoBruto as RadarFormat) : undefined;
+      const personalidade = PERSONALIDADES.includes(personalidadeBruta as RadarPersonality)
+        ? (personalidadeBruta as RadarPersonality)
+        : undefined;
+      const tecnicas = Array.isArray(analysis?.['tecnicas'])
+        ? (analysis['tecnicas'] as string[])
+        : undefined;
+
+      this.store.setPautaRadar(created.id, {
+        formato,
+        personalidade,
+        tecnicas,
+        analise: analysis
+          ? {
+              fatos: Array.isArray(analysis['fatos']) ? (analysis['fatos'] as string[]) : undefined,
+              incertos: Array.isArray(analysis['incertos'])
+                ? (analysis['incertos'] as string[])
+                : undefined,
+              angulo: typeof analysis['angulo'] === 'string' ? analysis['angulo'] : undefined,
+              gancho: typeof analysis['gancho'] === 'string' ? analysis['gancho'] : undefined,
+              porqueInteressa:
+                typeof analysis['porqueInteressa'] === 'string'
+                  ? analysis['porqueInteressa']
+                  : undefined,
+            }
+          : undefined,
+        score: item.score,
+        origem: item.articles[0]?.url,
+      });
+
+      this.created.emit();
     } finally {
       this.producingId.set(null);
     }
