@@ -1,7 +1,7 @@
 {
   "name": "canal-dark",
   "version": "0.0.0",
-  "main": "electron/main.js",
+  "main": "electron/main.mjs",
   "scripts": {
     "ng": "ng",
     "dev": "ng serve --host 0.0.0.0 --port 3000",
@@ -14,7 +14,10 @@
     "electron:build": "npm run build && electron-builder",
     "cli": "node scripts/render-cli.mjs",
     "render": "node scripts/render-cli.mjs render",
-    "listar": "node scripts/render-cli.mjs list"
+    "listar": "node scripts/render-cli.mjs list",
+    "app": "node scripts/app-launcher.mjs",
+    "app:dev": "set CANAL_DARK_DEV_URL=http://localhost:3000&& node scripts/app-launcher.mjs",
+    "app:smoke": "node scripts/app-launcher.mjs --smoke"
   },
   "build": {
     "appId": "com.canaldark.studio",

@@ -48,6 +48,18 @@ npm run render -- <pautaId> --formato cartoes --voz blend --abrir
 - O CLI **sobe um servidor temporário** e o encerra ao terminar; se já houver um servidor no ar (janela do `CanalDark.bat`), ele só reaproveita.
 - Parar um servidor manual: `npm run cli -- stop`.
 
+## App desktop (Electron)
+
+```bash
+node node_modules/electron/install.js   # uma vez: baixa o runtime (~120 MB)
+npm run app                             # abre em janela própria, sem navegador
+npm run app:dev                         # usa o servidor de desenvolvimento (npm run dev)
+```
+
+O Electron sobe o servidor SSR como processo filho, espera a API responder e abre a janela.
+Fechar a janela encerra o servidor (e FFmpeg/Python junto). Se a porta 3000 estiver ocupada,
+ele escolhe 3001 em diante. Logs em `logs/electron-server.log`.
+
 ## Interface como app
 
 **`CanalDark.bat`** compila (só quando o código muda), sobe em modo produção e abre numa

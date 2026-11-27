@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, copyFile, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, copyFile, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -407,6 +407,36 @@ export interface RenderSourceInput {
   publishedAt?: string;
 }
 
+/**
+ * Cria a pasta de trabalho do render.
+ *
+ * O TEMP do Windows pode estar bloqueado (política corporativa, antivírus ou
+ * sandbox) e derrubar o render com EPERM. Ordem: CANAL_DARK_WORK_DIR, TEMP do
+ * sistema e, por último, build/render-tmp dentro do projeto.
+ */
+async function createWorkDir(): Promise<string> {
+  const candidates = [
+    process.env['CANAL_DARK_WORK_DIR']?.trim(),
+    tmpdir(),
+    resolve(process.cwd(), 'build', 'render-tmp'),
+  ].filter((value): value is string => Boolean(value));
+
+  let lastError: unknown = null;
+  for (const base of candidates) {
+    try {
+      await mkdir(base, { recursive: true });
+      return await mkdtemp(join(base, 'canal-dark-mp4-'));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(
+    `não foi possível criar a pasta de trabalho do render (TEMP bloqueado?): ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
 export async function renderVerticalShortMp4(params: {
   scenes: RenderSceneInput[];
   srtContent: string;
@@ -435,7 +465,7 @@ export async function renderVerticalShortMp4(params: {
     throw new Error('Nenhuma cena disponível para renderização.');
   }
 
-  const workDir = await mkdtemp(join(tmpdir(), 'canal-dark-mp4-'));
+  const workDir = await createWorkDir();
   const fallbackImg = resolveFallbackStudioPath();
   const downloadedCache = new Map<string, { path: string; kind: 'image' | 'video' } | null>();
   let assetCounter = 0;

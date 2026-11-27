@@ -1628,8 +1628,10 @@ app.use((req, res, next) => {
 
 if (isMainModule(import.meta.url)) {
   const port = Number(process.env['PORT'] || 3000);
-  app.listen(port, '0.0.0.0', () => {
-    console.log(`Canal Dark server listening on http://0.0.0.0:${port}`);
+// App desktop (Electron) escuta só localhost; fora dele o padrão continua 0.0.0.0.
+const host = (process.env['HOST'] || '0.0.0.0').trim() || '0.0.0.0';
+  app.listen(port, host, () => {
+    console.log(`Canal Dark server listening on http://${host}:${port}`);
   });
 }
 

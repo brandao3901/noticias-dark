@@ -1389,3 +1389,51 @@ Com **Parado**:
 
 Select **Movimento** ao lado de **Formato** no Estúdio e QC, gravado em
 `pauta.narration.motion` e enviado no payload do render.
+
+---
+
+## 28. App desktop com Electron (26/11/2026)
+
+Pedido: rodar o app como aplicativo de desktop, por `npm run app`.
+
+### 28.1 O que já existia e o que faltava
+
+O `package.json` já declarava Electron 45 + `electron-builder`, mas:
+- o **binário do Electron não estava baixado** (`node_modules/electron/dist` ausente);
+- `electron/main.js` usava `import` sem `"type": "module"` (não carregava), importava o
+  servidor **no processo principal**, fixava a porta 3000 e esperava `setTimeout(1200)`.
+
+### 28.2 Arquitetura nova
+
+`electron/main.mjs` (ESM) + `scripts/app-launcher.mjs`:
+
+1. **Perfil portátil** em `.electron-data/` (o `%APPDATA%` pode negar escrita).
+2. **Porta livre** (3000, 3001, …) testando bind antes.
+3. **Servidor como processo filho**: `node dist/canal-dark/server/server.mjs` com
+   `PORT`, `HOST=127.0.0.1`, `NODE_ENV=production`, log em `logs/electron-server.log`.
+4. **Espera a API** responder (`/api/config/status`, até 60 s) em vez de sleep fixo.
+5. **Janela** 1440×960, fundo `#0a0d12`, ícone da Brasa, menu em português.
+6. **Fechamento limpo**: `before-quit` → `taskkill /T /F` no filho (leva FFmpeg/Python).
+7. **Instância única**; se o lock falhar, segue mesmo assim em vez de abrir nada.
+8. **Falha do servidor**: página de erro local com o caminho do log.
+
+Launcher: confere o binário (com instrução se faltar), compila quando `src/` está mais novo
+que `dist/`, e **repete sem `--no-sandbox`** se o Chromium cair com `STATUS_BREAKPOINT`
+(comum em conta de administrador/sessão sem desktop).
+
+### 28.3 Server: `HOST` e pasta de trabalho
+
+- `HOST` (padrão `0.0.0.0`) — o Electron usa `127.0.0.1`.
+- `createWorkDir()`: o render usa `CANAL_DARK_WORK_DIR` → TEMP → `build/render-tmp`.
+  Motivo: dentro do app desktop o TEMP estava bloqueado (`EPERM` em `mkdtemp`) e o render
+  falhava; agora ele acha uma pasta gravável.
+
+### 28.4 Prova
+
+| Teste | Resultado |
+|---|---|
+| `npm run app:smoke` | janela carrega o app, `SMOKE OK <título>`, sai em 1,3 s |
+| Fechar a janela | electron encerra e a porta 3000 fica livre |
+| Porta 3000 ocupada | sobe em **3001** e carrega normalmente |
+| Render dentro do app | **done**, 12,65 s, formato `cards`, voz `kokoro` |
+| Log | `logs/electron-server.log` com subida e prontidão |
