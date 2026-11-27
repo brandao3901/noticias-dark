@@ -228,9 +228,12 @@ function buildStillFilterComplex(
   return [
     '[0:v]split=2[bgs][fgs]',
     '[bgs]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,gblur=sigma=42,eq=brightness=-0.06[bgb]',
+    // Shot 1: imagem INTEIRA sobre o fundo desfocado (padrão de telejornal).
+    // Shots de detalhe: recorte que preenche 9:16. Nos dois casos a moldura é
+    // 1620×2880 (igual ao fundo) — senão a foto sai pequena na composição final.
     cropZoom > 1.01
-      ? `[fgs]scale=${Math.round(1620 * cropZoom)}:-1,crop=1620:2880:(iw-1620)/2:(ih-2880)/2[fgn]`
-      : '[fgs]scale=1620:-1[fgn]',
+      ? `[fgs]scale=${Math.round(1620 * cropZoom)}:${Math.round(2880 * cropZoom)}:force_original_aspect_ratio=increase,crop=1620:2880[fgn]`
+      : '[fgs]scale=1620:2880:force_original_aspect_ratio=decrease[fgn]',
     // O fundo desfocado é 1620×2880 (para a blur não serrilhar), mas o vídeo
     // final é 1080×1920: sem esta redução o MP4 saía em 1620×2880 e o avatar
     // (posicionado em coordenadas de 1080) aparecia menor do que devia.

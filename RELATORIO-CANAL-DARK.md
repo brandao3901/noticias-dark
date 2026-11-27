@@ -2000,3 +2000,27 @@ Correção: o filtro agora termina em `scale=1080:1920` quando não há moviment
 | Cena com foto (`cards`) | avatar no canto (PiP), sem cobrir |
 | Vídeo misto (bancada + foto) | render **done**, grafo com `split` de 2 grupos, sem erro do FFmpeg |
 | Resolução do MP4 | **1080×1920** (antes 1620×2880) |
+
+### 41.5 A causa real do "avatar no canto sobre o cenário"
+
+O sintoma (avatar no canto quando a cena não tinha foto) tinha **duas** causas:
+
+1. o modo bancada ainda não existia (corrigido em 41.2);
+2. **cenas com UMA foto paisagem falhavam** no filtro de imagem parada: a frente era
+   `scale=1620:-1` e, numa foto 1200×800, sobrava só 1080 px de altura — o `crop=1620:2880`
+   era inválido, o FFmpeg errava o segmento e a cena caía no **cenário padrão**, deixando o
+   avatar no canto sem foto nenhuma na tela. Cenas com 2+ fotos escapavam (cropZoom 1).
+
+Correção: a frente agora usa `force_original_aspect_ratio` —
+
+- shot 1: `scale=1620:2880:decrease` (imagem inteira sobre o fundo desfocado, padrão de telejornal);
+- shots de detalhe: `scale=…:increase,crop=1620:2880` (preenche 9:16).
+
+### 41.6 Verificação final (pauta real de 6 cenas, 41,6 s)
+
+| Cena | Mídia | Resultado |
+|---|---|---|
+| 0–4 | foto | foto renderizada, avatar no canto |
+| 5 | nenhuma | cenário de estúdio, avatar **na bancada** |
+
+Resolução: **1080×1920**. Instrumentação de depuração removida do código.
