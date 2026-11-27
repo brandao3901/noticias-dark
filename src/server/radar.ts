@@ -84,6 +84,15 @@ export const RADAR_EVERGREEN_FEEDS: RadarFeed[] = [
   ever('livescience', 'Live Science', 'https://www.livescience.com/feeds/all', 'Estados Unidos', 'inglês', 'Ciência'),
   ever('atlasobscura', 'Atlas Obscura', 'https://www.atlasobscura.com/feeds/latest', 'Estados Unidos', 'inglês', 'Curiosidades'),
   ever('hakai', 'Hakai Magazine', 'https://hakaimagazine.com/feed/', 'Canadá', 'inglês', 'Natureza'),
+  ever('quanta', 'Quanta Magazine', 'https://www.quantamagazine.org/feed/', 'Estados Unidos', 'inglês', 'Ciência'),
+  ever('sciencealert', 'ScienceAlert', 'https://www.sciencealert.com/rss', 'Austrália', 'inglês', 'Ciência'),
+  ever('bbc-science', 'BBC Science', 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml', 'Reino Unido', 'inglês', 'Ciência'),
+  ever('nyt-science', 'New York Times Science', 'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml', 'Estados Unidos', 'inglês', 'Ciência'),
+  ever('theconversation', 'The Conversation', 'https://theconversation.com/articles.atom', 'Austrália', 'inglês', 'Ciência'),
+  ever('nautilus', 'Nautilus', 'https://nautil.us/feed/', 'Estados Unidos', 'inglês', 'Ciência'),
+  ever('bigthink', 'Big Think', 'https://bigthink.com/feed/', 'Estados Unidos', 'inglês', 'Conhecimento'),
+  ever('knowable', 'Knowable', 'https://knowablemagazine.org/rss', 'Estados Unidos', 'inglês', 'Conhecimento'),
+  ever('aeon', 'Aeon', 'https://aeon.co/feed.rss', 'Reino Unido', 'inglês', 'Conhecimento'),
 ];
 
 const STOPWORDS = new Set([
@@ -113,6 +122,14 @@ const RADAR_BLOCK =
  */
 const RADAR_SENSITIVE =
   /\b(dies|died|dead body|killed|murder\w*|shooting|shot dead|funeral|obituary|suicide|rape|abused|massacre|genocide|terror\w*|assassinat\w*|beheaded|torture\w*|executed)\b/i;
+
+/** No radar documental, notícia do dia não serve: história atemporal sim. */
+const NEWS_BLOCK =
+  /\b(breaking|live blog|update[sd]?|election|vote[sd]?|war|invasion|ceasefire|tariff[s]?|stock market|earnings|quarter|weather warning|storms? hit|hit[s]? (?:the )?us|without power|dozens (?:injured|dead)|traffic|shooting|attack|protest|suspect|charged with|police say)\b/i;
+
+/** Títulos que costumam ser explicação/curiosidade (o que o canal quer). */
+const EVERGREEN_HINT =
+  /\b(how|why|what|history|origin|hidden|secret|discover|discovers|found|ancient|mystery|explain|science|study|first|invent|built|works|inside|strange|unusual|rare)\b/i;
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const AI_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -196,7 +213,11 @@ async function collectArticles(scope: RadarScope, forceRefresh: boolean): Promis
 }
 
 /** Agrupa publicações do mesmo acontecimento (título parecido = mesma história). */
-export function clusterArticles(articles: RadarArticle[]): RadarClusterItem[] {
+export function clusterArticles(
+  articles: RadarArticle[],
+  options: { documental?: boolean } = {},
+): RadarClusterItem[] {
+  const scopeIsDocumental = Boolean(options.documental);
   const sorted = [...articles].sort(
     (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
   );
@@ -205,6 +226,8 @@ export function clusterArticles(articles: RadarArticle[]): RadarClusterItem[] {
   for (const article of sorted) {
     // Descarta promoção/varejo e violência explícita antes de agrupar.
     if (RADAR_BLOCK.test(article.title) || RADAR_SENSITIVE.test(article.title)) continue;
+    // Documental: fora notícia do dia; fica o que é história/descoberta/explicação.
+    if (scopeIsDocumental && NEWS_BLOCK.test(article.title) && !EVERGREEN_HINT.test(article.title)) continue;
 
     const tokens = tokensOf(article.title);
     if (tokens.size < 2) continue;
@@ -474,7 +497,7 @@ export async function buildRadar(params: {
   filters: RadarFilters;
 }> {
   const cache = await collectArticles(params.scope, Boolean(params.forceRefresh));
-  const clusters = clusterArticles(cache.articles);
+  const clusters = clusterArticles(cache.articles, { documental: params.scope === 'documental' });
 
   // Ordena já pelos sinais de repercussão: a IA avalia os melhores primeiro.
   for (const cluster of clusters) {

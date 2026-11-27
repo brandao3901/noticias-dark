@@ -1618,3 +1618,38 @@ Problema relatado: *"está pegando todas as pautas, não as mais virais"*.
 
 Exemplo de topo: `repercutindo · viralidade 50/100` (2 fontes, 2 países) antes de itens de
 fonte única com nota editorial alta — exatamente a ordem que faltava.
+
+---
+
+## 33. Radar com histórias atemporais (não só notícia do dia) (27/11/2026)
+
+Relato: *"só manda curiosidade atual, nada interessante como coisas do cotidiano"*.
+
+### 33.1 O que mudou
+
+- **Padrão do Radar agora é "Histórias e curiosidades"** (documental); tendências virou a segunda aba.
+- **Fontes evergreen ampliadas** para 14 veículos de ciência, história e conhecimento:
+  Quanta, ScienceAlert, BBC Science, NYT Science, The Conversation, Nautilus, Big Think,
+  Knowable, Aeon, Smithsonian, Atlas Obscura, Hakai, IEEE Spectrum, NASA, ScienceDaily, Phys.org,
+  New Atlas, Ars Technica, Live Science.
+- **Filtro anti-notícia no documental**: título de notícia do dia (breaking, storm hits, without power,
+  election, police say, stock market, "dozens dead"…) só entra se também for explicação/descoberta
+  (`how`, `why`, `history`, `ancient`, `discover`, `mystery`, `study`…).
+- Feeds que retornavam 404/403 (Mental Floss, Britannica, BBC Future, HowStuffWorks) foram
+  substituídos por Quanta, ScienceAlert, BBC Science e NYT Science — **0 feeds com erro** agora.
+
+### 33.2 Prova (execução real, com IA)
+
+```
+8,4 s · 18 itens · 0 feeds com erro · IA: true
+
+[curiosidade/explicativo]  Ilhas naturais flutuantes instaladas em parques de Glasgow
+[minidocumentario/documentario] DNA antigo revela cruzamento entre neandertais e humanos
+[curiosidade/misterioso]  Nova espécie de samambaia descrita após 200 anos
+[curiosidade/documentario]  Como corvos da cidade e do campo enxergam o mundo diferente
+[descoberta/impactante]  Crânio pré-histórico no Tibete revela parente das hienas
+[curiosidade/explicativo]  Por que a palavra "huge" soa tão grande
+```
+
+Cada cartão já vem com **resumo em português** e **formato/tom sugeridos** pela IA — o que
+alimenta direto o Motor de Retenção.

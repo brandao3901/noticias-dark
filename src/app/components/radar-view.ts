@@ -40,7 +40,7 @@ import { StudioStore } from '../services/studio-store';
               [class.bg-white/10]="scope() === 'tendencias'"
               [class.text-slate-100]="scope() === 'tendencias'"
             >
-              Tendências
+              Tendências (agora)
             </button>
             <button
               type="button"
@@ -49,7 +49,7 @@ import { StudioStore } from '../services/studio-store';
               [class.bg-white/10]="scope() === 'documental'"
               [class.text-slate-100]="scope() === 'documental'"
             >
-              Documental
+              Histórias e curiosidades
             </button>
           </div>
 
@@ -197,7 +197,7 @@ export class RadarView {
 
   readonly created = output<void>();
 
-  readonly scope = signal<RadarScope>('tendencias');
+  readonly scope = signal<RadarScope>('documental');
   readonly items = signal<RadarClusterItem[]>([]);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -210,7 +210,7 @@ export class RadarView {
   readonly scopeHint = computed(() =>
     this.scope() === 'tendencias'
       ? 'O que está crescendo agora, em vários países e idiomas'
-      : 'Histórias atemporais: ciência, história, engenharia e descobertas',
+      : 'Histórias atemporais: como as coisas funcionam, descobertas, história e curiosidades do cotidiano',
   );
 
   private loaded = false;
