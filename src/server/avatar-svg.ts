@@ -13,6 +13,8 @@ export interface AvatarSvgOptions {
   expression: AvatarExpression;
   /** No PiP o avatar fica sobre um cartao arredondado, como na previa do app. */
   framed?: boolean;
+  /** Bancada: esmaece a base para o busto "entrar" atrás da mesa. */
+  fadeBottom?: boolean;
 }
 
 const BROWS: Record<AvatarExpression, { left: string; right: string }> = {
@@ -29,7 +31,7 @@ const TILT: Record<AvatarExpression, number> = {
   closing: 0,
 };
 
-export function buildAvatarSvg({ jawOpen, expression, framed = false }: AvatarSvgOptions): string {
+export function buildAvatarSvg({ jawOpen, expression, framed = false, fadeBottom = false }: AvatarSvgOptions): string {
   const opening = Math.max(0, Math.min(1, jawOpen));
   const mouthOpeningPx = 1.5 + opening * 11.5;
   const speaking = opening > 0.02;
@@ -60,7 +62,10 @@ export function buildAvatarSvg({ jawOpen, expression, framed = false }: AvatarSv
     </linearGradient>
   </defs>
 
+  ${fadeBottom ? '<linearGradient id="cdFade" x1="0" y1="0" x2="0" y2="1"><stop offset="76%" stop-color="#fff" stop-opacity="1"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></linearGradient><mask id="cdMask"><rect width="240" height="300" fill="url(#cdFade)"/></mask>' : ''}
   ${framed ? '<rect x="4" y="4" width="232" height="292" rx="26" fill="#0f1520" fill-opacity="0.9" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>' : ''}
+
+  ${fadeBottom ? '<g mask="url(#cdMask)">' : '<g>'}
 
   <g transform="translate(0, ${torsoShift.toFixed(2)})">
     <path d="M36 300 C38 232, 68 206, 120 206 C172 206, 202 232, 204 300 Z" fill="url(#cdSuitGrad)" stroke="#334155" stroke-width="1.5"/>
@@ -92,5 +97,6 @@ export function buildAvatarSvg({ jawOpen, expression, framed = false }: AvatarSv
   </g>
 
   <circle cx="136" cy="236" r="3.5" fill="#334155" stroke="#94a3b8" stroke-width="1"/>
+  </g>
 </svg>`;
 }

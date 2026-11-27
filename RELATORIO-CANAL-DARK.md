@@ -1962,3 +1962,41 @@ Verificado no pacote (execução real):
 | Render com `engine=kokoro, voice=blend` | **done** — `render.json` registra `engine: kokoro · voice: blend · model: kokoro-onnx` |
 
 Tamanhos: pasta **1.051 MB** · `.exe` único **491 MB**.
+
+---
+
+## 41. Avatar na bancada quando a cena não tem foto (27/11/2026)
+
+### 41.1 Pedido
+
+Cena sem foto mostra o cenário de estúdio, mas o avatar aparecia no canto superior. Com foto, o canto
+é obrigatório (não pode cobrir a imagem). Ou seja: **precisa de um terceiro enquadramento**.
+
+### 41.2 O que foi feito
+
+- Novo modo **`desk`** (bancada): usado quando **não há foto real** na cena (modo fotos) — o
+  apresentador entra maior, centralizado, com a base na linha da mesa do cenário.
+- **`pip`** continua para cenas **com foto** (canto, 340 px).
+- **`full`** continua para cartões/documento sem página.
+- Base do avatar esmaecida (gradiente no SVG) para o busto "entrar" atrás da mesa em vez de cortar seco.
+- O grafo monta **apenas os grupos existentes** (`split=N` dinâmico): vídeo só com bancada, só com
+  PiP, ou os dois.
+
+### 41.3 Bug sério encontrado no caminho
+
+O `buildStillFilterComplex` compunha em **1620×2880** (fundo desfocado 2×) e **nunca reduzia** para
+1080×1920. Resultado: todo vídeo do modo **fotos** saía em 1620×2880 — maior, mais pesado, mais
+lento de decodificar e com o avatar posicionado em coordenadas erradas (é por isso que ele parecia
+pequeno e no lugar errado).
+
+Correção: o filtro agora termina em `scale=1080:1920` quando não há movimento (o zoompan já devolve
+1080×1920).
+
+### 41.4 Testes
+
+| Teste | Resultado |
+|---|---|
+| Cena sem foto | avatar **na bancada**, base na mesa, fade embaixo — frame conferido |
+| Cena com foto (`cards`) | avatar no canto (PiP), sem cobrir |
+| Vídeo misto (bancada + foto) | render **done**, grafo com `split` de 2 grupos, sem erro do FFmpeg |
+| Resolução do MP4 | **1080×1920** (antes 1620×2880) |

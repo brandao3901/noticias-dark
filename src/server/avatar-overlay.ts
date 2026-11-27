@@ -18,8 +18,8 @@ const RASTER_WIDTH = 600;
 export interface AvatarFrameState {
   expression: AvatarExpression;
   level: number;
-  /** PiP usa cartao arredondado; full usa a figura solta. */
-  mode?: 'full' | 'pip';
+  /** PiP usa cartao arredondado; full usa a figura solta; desk é a bancada. */
+  mode?: 'full' | 'pip' | 'desk';
 }
 
 export interface AvatarOverlayResult {
@@ -28,7 +28,7 @@ export interface AvatarOverlayResult {
 }
 
 function frameKey(state: AvatarFrameState): string {
-  const mode = state.mode === 'pip' ? 'pip' : 'full';
+  const mode = state.mode === 'pip' ? 'pip' : state.mode === 'desk' ? 'desk' : 'full';
   return `${mode}_${state.expression}_${String(state.level).padStart(2, '0')}`;
 }
 
@@ -56,6 +56,8 @@ export async function buildAvatarOverlay(params: {
       jawOpen: state.level / (JAW_LEVELS - 1),
       expression: state.expression,
       framed: state.mode === 'pip',
+      // Bancada: base esmaecida para o busto entrar atrás da mesa.
+      fadeBottom: state.mode === 'desk',
     });
     const png = new Resvg(svg, {
       fitTo: { mode: 'width', value: RASTER_WIDTH },

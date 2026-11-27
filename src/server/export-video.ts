@@ -231,7 +231,10 @@ function buildStillFilterComplex(
     cropZoom > 1.01
       ? `[fgs]scale=${Math.round(1620 * cropZoom)}:-1,crop=1620:2880:(iw-1620)/2:(ih-2880)/2[fgn]`
       : '[fgs]scale=1620:-1[fgn]',
-    `[bgb][fgn]overlay=(W-w)/2:(H-h)/2:shortest=1${motionFilter},fps=30,format=yuv420p${flash}[vout]`,
+    // O fundo desfocado é 1620×2880 (para a blur não serrilhar), mas o vídeo
+    // final é 1080×1920: sem esta redução o MP4 saía em 1620×2880 e o avatar
+    // (posicionado em coordenadas de 1080) aparecia menor do que devia.
+    `[bgb][fgn]overlay=(W-w)/2:(H-h)/2:shortest=1${motionFilter || ',scale=1080:1920:flags=lanczos'},fps=30,format=yuv420p${flash}[vout]`,
   ].join(';');
 }
 
@@ -1016,7 +1019,7 @@ export async function renderVerticalShortMp4(params: {
     // Avatar: o apresentador não disputa espaço com a foto do fato.
     // Regra: cena COM imagem esconde o avatar; cena SEM imagem usa tela cheia;
     // a última cena (fechamento) mostra o apresentador em PiP quando há foto.
-    type AvatarWindow = { start: number; end: number; mode: 'full' | 'pip'; expression: AvatarExpression };
+    type AvatarWindow = { start: number; end: number; mode: 'full' | 'pip' | 'desk'; expression: AvatarExpression };
     const avatarWindows: AvatarWindow[] = [];
     {
       let cursor = 0;
@@ -1026,14 +1029,19 @@ export async function renderVerticalShortMp4(params: {
         const requested = scene.avatarMode ?? 'full';
         const hasVisual = sceneVisuals[i] === true;
 
-        let mode: 'full' | 'pip' | 'hidden';
+        let mode: 'full' | 'pip' | 'desk' | 'hidden';
+        const modoFoto = !cardsMode && !documentMode;
         if (requested === 'hidden') {
           mode = 'hidden';
+        } else if (modoFoto && !hasVisual) {
+          // Sem foto: aparece o cenário de estúdio e o apresentador vai para a
+          // bancada (embaixo, atrás da mesa), não para o canto.
+          mode = 'desk';
         } else if (!hasVisual) {
-          // Sem imagem de apoio: o apresentador ocupa a tela.
+          // Cartões/documento sem página: apresentador centralizado.
           mode = 'full';
         } else {
-          // Com imagem: personagem fixo no canto durante o vídeo inteiro.
+          // Com foto: personagem no canto, sem cobrir a imagem.
           mode = 'pip';
         }
 
@@ -1056,9 +1064,11 @@ export async function renderVerticalShortMp4(params: {
         const win = avatarWindows.find((w) => t >= w.start && t < w.end);
         return win?.expression ?? avatarWindows[0].expression;
       };
-      const modeAt = (t: number): 'full' | 'pip' => {
+      const modeAt = (t: number): 'full' | 'pip' | 'desk' => {
         const win = avatarWindows.find((w) => t >= w.start && t < w.end);
-        return win?.mode ?? avatarWindows[0].mode;
+        // 'desk' usa a figura solta (sem o cartão arredondado do PiP).
+        const bruto = win?.mode ?? avatarWindows[0].mode;
+        return bruto === 'pip' ? 'pip' : 'full';
       };
 
       let levels: number[];
@@ -1113,11 +1123,21 @@ export async function renderVerticalShortMp4(params: {
       if (includeAvatar && hasAvatar) {
         const fullWindows = avatarWindows.filter((w) => w.mode === 'full');
         const pipWindows = avatarWindows.filter((w) => w.mode === 'pip');
-        const needsSplit = fullWindows.length > 0 && pipWindows.length > 0;
+        // Bancada: cena sem foto, com o cenário de estúdio ao fundo.
+        const deskWindows = avatarWindows.filter((w) => w.mode === 'desk');
+        const grupos = [fullWindows, pipWindows, deskWindows].filter((g) => g.length > 0);
+        const needsSplit = grupos.length > 1;
 
         // O FFmpeg recusa um `split` com saída não conectada: só divide o vídeo
-        // do avatar quando os dois enquadramentos aparecem no mesmo vídeo.
-        if (needsSplit) parts.push(`[2:v]split=2[avsrcF][avsrcP]`);
+        // do avatar quando mais de um enquadramento aparece no mesmo vídeo.
+        if (needsSplit) {
+          const rotulos = [
+            fullWindows.length ? 'avsrcF' : null,
+            pipWindows.length ? 'avsrcP' : null,
+            deskWindows.length ? 'avsrcD' : null,
+          ].filter((r): r is string => Boolean(r));
+          parts.push(`[2:v]split=${rotulos.length}${rotulos.map((r) => `[${r}]`).join('')}`);
+        }
 
         let overlayIndex = 0;
 
@@ -1174,6 +1194,8 @@ export async function renderVerticalShortMp4(params: {
           'H-h-520',
         );
         addWindows(pipWindows, needsSplit ? 'avsrcP' : '2:v', 'scale=340:-1', 'W-w-36', pipY);
+        // Bancada (cenário de estúdio): apresentador maior, base na linha da mesa.
+        addWindows(deskWindows, needsSplit ? 'avsrcD' : '2:v', 'scale=640:-1', '(W-w)/2', '1002-h');
       }
 
       // Cards por cima de tudo: gancho (0–2 s) e pergunta de fechamento.
