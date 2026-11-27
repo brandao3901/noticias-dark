@@ -372,7 +372,46 @@ import { NarrationVoicePicker } from './narration-voice-picker';
                     <mat-icon class="text-[15px]">article</mat-icon>
                     <span>Baixar roteiro .TXT</span>
                   </button>
+                  @if (pauta.render?.videoUrl) {
+                    <button
+                      type="button"
+                      (click)="requestDeleteVideo()"
+                      [disabled]="deletingVideo()"
+                      title="Apaga o vídeo renderizado (vai para a lixeira do app)"
+                      class="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      <mat-icon class="text-[15px]">delete_outline</mat-icon>
+                      <span>{{ deletingVideo() ? 'Apagando…' : 'Apagar vídeo' }}</span>
+                    </button>
+                  }
                 </div>
+
+                @if (replacePrompt(); as existing) {
+                  <div class="rounded-lg border border-[#e59a38]/40 bg-[#e59a38]/10 p-3 text-xs text-[#f7d7a8]">
+                    <p class="font-medium">Já existe um vídeo desta pauta.</p>
+                    <p class="mt-1 text-[11px] text-slate-300">
+                      {{ formatExistingVideo(existing) }} — gerar outro apaga esse arquivo
+                      (ele vai para a lixeira do app).
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        (click)="confirmReplaceVideo()"
+                        [disabled]="renderingMp4()"
+                        class="rounded bg-[#e59a38] px-3 py-1.5 text-[11px] font-semibold text-[#0a0d12] hover:bg-[#f0aa4b] disabled:opacity-50"
+                      >
+                        Apagar e gerar o novo
+                      </button>
+                      <button
+                        type="button"
+                        (click)="cancelReplaceVideo()"
+                        class="rounded border border-white/20 px-3 py-1.5 text-[11px] text-slate-200 hover:bg-white/10"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                }
                 @if (renderMp4Error()) {
                   <p class="text-xs text-red-300">{{ renderMp4Error() }}</p>
                 }
@@ -697,6 +736,15 @@ export class StudioQcView {
     const job = this.queue.activeJob();
     return Boolean(job && job.pautaId === this.store.activePauta()?.id);
   });
+  /** Vídeo existente que seria substituído (diálogo de confirmação). */
+  readonly replacePrompt = signal<{
+    videoMode: string | null;
+    durationSec: number | null;
+    sizeBytes: number;
+    renderedAt: string | null;
+  } | null>(null);
+  readonly deletingVideo = signal(false);
+
   readonly mediaSlotIndex = signal(0);
   readonly subtitleCueIndex = signal(0);
 
@@ -971,12 +1019,24 @@ export class StudioQcView {
     this.triggerDownload(`roteiro-descricao_${pauta.id}.txt`, txt, 'text/plain;charset=utf-8');
   }
 
-  async renderAndDownloadMp4(mode: 'final' | 'preview' = 'final'): Promise<void> {
+  async renderAndDownloadMp4(
+    mode: 'final' | 'preview' = 'final',
+    replaceExisting = false,
+  ): Promise<void> {
     const pauta = this.store.activePauta();
     if (!pauta?.script?.scenes?.length) return;
 
     this.renderMp4Error.set(null);
     this.gateMessage.set(null);
+
+    // Já existe vídeo? Pergunta antes: trocar de formato não pode travar a tela.
+    if (!replaceExisting) {
+      const existing = await this.fetchVideoInfo(pauta.id);
+      if (existing?.exists) {
+        this.replacePrompt.set(existing);
+        return;
+      }
+    }
 
     try {
       const srtContent = this.store.buildSubtitles(pauta, 'srt');
@@ -1040,14 +1100,110 @@ export class StudioQcView {
         },
       };
 
-      await this.queue.enqueue(payload);
+      await this.queue.enqueue({ ...payload, replaceExisting });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro inesperado ao enfileirar o render.';
+      // 409 do servidor: outra aba já tinha vídeo — mostra o mesmo diálogo.
+      const flags = err as Error & {
+        requiresReplace?: boolean;
+        existing?: {
+          videoMode: string | null;
+          durationSec: number | null;
+          sizeBytes: number;
+          renderedAt: string | null;
+        };
+      };
+      if (flags.requiresReplace) {
+        if (flags.existing) this.replacePrompt.set(flags.existing);
+        return;
+      }
       if (/aprovação|bloqueantes|salva no disco/i.test(message)) {
         this.gateMessage.set(message);
       } else {
         this.renderMp4Error.set(message);
       }
+    }
+  }
+
+  /** Lê o vídeo existente no servidor (para avisar antes de substituir). */
+  private async fetchVideoInfo(pautaId: string): Promise<{
+    exists: boolean;
+    videoMode: string | null;
+    durationSec: number | null;
+    sizeBytes: number;
+    renderedAt: string | null;
+  } | null> {
+    try {
+      const res = await fetch(`/api/projects/${pautaId}/video-info`);
+      if (!res.ok) return null;
+      return (await res.json()) as {
+        exists: boolean;
+        videoMode: string | null;
+        durationSec: number | null;
+        sizeBytes: number;
+        renderedAt: string | null;
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  formatExistingVideo(info: {
+    videoMode: string | null;
+    durationSec: number | null;
+    sizeBytes: number;
+    renderedAt: string | null;
+  }): string {
+    const mode =
+      info.videoMode === 'cards'
+        ? 'cartões'
+        : info.videoMode === 'documento'
+          ? 'documento'
+          : info.videoMode === 'fotos'
+            ? 'fotos'
+            : 'formato anterior';
+    const size = info.sizeBytes
+      ? `${(info.sizeBytes / 1024 / 1024).toFixed(1)} MB`
+      : 'tamanho desconhecido';
+    const when = info.renderedAt
+      ? new Date(info.renderedAt).toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : 'data desconhecida';
+    const dur = info.durationSec ? `${Math.round(info.durationSec)} s` : null;
+    return `Vídeo de ${mode} (${[dur, size].filter(Boolean).join(', ')}) de ${when}`;
+  }
+
+  confirmReplaceVideo(): void {
+    this.replacePrompt.set(null);
+    if (!this.store.activePauta()) return;
+    void this.renderAndDownloadMp4('final', true);
+  }
+
+  cancelReplaceVideo(): void {
+    this.replacePrompt.set(null);
+  }
+
+  requestDeleteVideo(): void {
+    const pauta = this.store.activePauta();
+    if (!pauta) return;
+    void this.deleteRenderedVideo(pauta.id);
+  }
+
+  async deleteRenderedVideo(pautaId: string): Promise<void> {
+    this.deletingVideo.set(true);
+    this.renderMp4Error.set(null);
+    try {
+      const res = await fetch(`/api/projects/${pautaId}/video`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Falha ao apagar o vídeo (HTTP ${res.status}).`);
+      this.store.clearRenderedVideo(pautaId);
+    } catch (err) {
+      this.renderMp4Error.set(err instanceof Error ? err.message : 'Erro ao apagar o vídeo.');
+    } finally {
+      this.deletingVideo.set(false);
     }
   }
 

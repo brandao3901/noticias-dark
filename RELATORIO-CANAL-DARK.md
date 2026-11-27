@@ -1820,3 +1820,50 @@ chave, Wikimedia, Archive) e **nunca** chama a IA.
 | `smart` "mars exploration" | `library` · 8 fotos · 0,9 s (estrito) |
 | `smart` termo inexistente | `none` (não gasta IA) |
 | Autofill "Nasa encontra água em Marte" | NASA + Wikimedia + Openverse, 9 s para 2 cenas |
+
+---
+
+## 38. Trocar de formato sem travar + imagem pela fala da cena (27/11/2026)
+
+### 38.1 O vídeo antigo
+
+Antes: cada pauta tem um `video.mp4` e a URL era **sempre** `/api/projects/<id>/video` — depois de
+renderizar outro formato o player servia o **cache antigo**, e o arquivo continuava sendo servido
+enquanto o novo era escrito.
+
+Agora:
+
+- `GET /api/projects/:id/video-info` → `{ exists, sizeBytes, renderedAt, videoMode, durationSec }`
+- `DELETE /api/projects/:id/video` → move `video.mp4`, `thumbnail.jpg` e `render.json` para
+  `projects/.trash/<id>-video-<data>/` e limpa `pauta.render`
+- `POST /api/render` e `POST /api/studio/render/:id` aceitam **`replaceExisting`**:
+  sem ele, respondem **409** com o que já existe e **não renderizam nada**
+- **Cache-bust**: `videoUrl`/`thumbnailUrl` ganham `?v=<timestamp>`
+
+Interface:
+
+- Ao renderizar com vídeo existente aparece o aviso:
+  *"Já existe um vídeo desta pauta. Vídeo de fotos (45 s, 7,8 MB) de 27/11 19:05 — gerar outro
+  apaga esse arquivo (ele vai para a lixeira)."* → **Apagar e gerar o novo** / **Cancelar**
+- Botão **"Apagar vídeo"** ao lado dos downloads (com confirmação implícita no rótulo e lixeira).
+- O 409 do servidor (ex.: outra aba) abre o mesmo diálogo — nada de erro cru.
+
+### 38.2 Imagem pela fala da cena
+
+`buildIllustrationPrompt` passou a usar **somente a narração da cena** (duas primeiras frases,
+sem nomes próprios). O título da matéria só entra se a cena ainda não tiver fala.
+
+Prova: título "Alerj aprova reajuste do governador" + fala "O governador sancionou o projeto em
+uma cerimônia fechada, sem imprensa" → prompt:
+`cinematic documentary photograph, ... governador sancionou projeto cerimonia fechada`
+(nenhuma menção a "reajuste").
+
+### 38.3 Testes
+
+| Teste | Resultado |
+|---|---|
+| `video-info` | `exists: true · fotos · 44,6 s · 8,2 MB` |
+| render sem confirmação | **409** `requiresReplace` |
+| `DELETE /video` | 200, arquivo no `.trash`, `video-info` → `exists: false` |
+| restaurar do `.trash` | vídeo de 7,8 MB volta e a pauta responde normal |
+| prompt pela fala | contém `sancionou/cerimonia`, não contém `reajuste` |

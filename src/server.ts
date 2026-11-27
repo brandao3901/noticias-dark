@@ -129,12 +129,14 @@ import {
 } from './server/scheduler';
 import {
   deleteProject,
+  deleteRenderedVideo,
   filePath,
   listProjects,
   projectDir,
   readProject,
   sanitizeProjectId,
   saveRenderArtifacts,
+  videoInfo,
   writeProject,
 } from './server/projects';
 import { srtToVtt } from './server/subtitles';
@@ -836,6 +838,27 @@ app.get('/api/projects/:id/video', (req, res) => {
   });
 });
 
+// Metadados do vídeo que já existe (para avisar antes de trocar de formato).
+app.get('/api/projects/:id/video-info', async (req, res) => {
+  const id = sanitizeProjectId(req.params['id'] ?? '');
+  if (!id) {
+    res.status(400).json({ error: 'Identificador de pauta inválido.' });
+    return;
+  }
+  res.json(await videoInfo(id));
+});
+
+// Apaga o vídeo renderizado (vai para .trash) sem tocar no resto da pauta.
+app.delete('/api/projects/:id/video', async (req, res) => {
+  const id = sanitizeProjectId(req.params['id'] ?? '');
+  if (!id) {
+    res.status(400).json({ error: 'Identificador de pauta inválido.' });
+    return;
+  }
+  const removed = await deleteRenderedVideo(id);
+  res.json({ ok: removed, removed });
+});
+
 app.get('/api/projects/:id/thumbnail', (req, res) => {
   const id = sanitizeProjectId(req.params['id'] ?? '');
   const path = id ? filePath(id, 'thumbnail.jpg') : null;
@@ -1100,8 +1123,11 @@ async function executeRender(
   return {
     seconds: result.durationSec,
     narrationRate: result.narrationRate ?? 1,
-    videoUrl: `/api/projects/${spec.pautaId}/video`,
-    thumbnailUrl: saved.thumbnailPath ? `/api/projects/${spec.pautaId}/thumbnail` : null,
+    // ?v= força o player a baixar o vídeo novo (antes ele servia cache do antigo).
+    videoUrl: `/api/projects/${spec.pautaId}/video?v=${Date.now()}`,
+    thumbnailUrl: saved.thumbnailPath
+      ? `/api/projects/${spec.pautaId}/thumbnail?v=${Date.now()}`
+      : null,
     files: saved.files,
     dir: saved.dir,
     mode: spec.mode,
@@ -1134,6 +1160,24 @@ app.post('/api/render', async (req, res) => {
   }
 
   const spec = parsed.spec;
+  const pautaId = spec.pautaId as string;
+
+  // Trocar de formato gera outro vídeo: sem confirmação explícita devolvemos o
+  // que já existe (e nada é renderizado). Com confirmação, o antigo vai para a lixeira.
+  const replaceExisting = (req.body as Record<string, unknown>)['replaceExisting'] === true;
+  const existingVideo = await videoInfo(pautaId);
+  if (existingVideo.exists) {
+    if (!replaceExisting) {
+      res.status(409).json({
+        error: 'Já existe um vídeo renderizado nesta pauta.',
+        requiresReplace: true,
+        existing: existingVideo,
+      });
+      return;
+    }
+    await deleteRenderedVideo(pautaId);
+  }
+
   const job = enqueueRender({
     label: spec.artifacts.scriptText.split('\n')[0]?.slice(0, 80) || 'render',
     pautaId: spec.pautaId,
@@ -1804,6 +1848,23 @@ app.post('/api/studio/render/:id', async (req, res) => {
 
   // O console pode forçar motor/voz (ex.: usar a voz do canal recém-salva).
   const payload = (req.body ?? {}) as Record<string, unknown>;
+
+  // Trocar de formato gera outro vídeo: o anterior precisa sair do caminho.
+  // Sem confirmação explícita, devolvemos o que existe e não renderizamos nada.
+  const replaceExisting = payload['replaceExisting'] === true;
+  const existingVideo = await videoInfo(pautaId);
+  if (existingVideo.exists) {
+    if (!replaceExisting) {
+      res.status(409).json({
+        error: 'Já existe um vídeo renderizado nesta pauta.',
+        requiresReplace: true,
+        existing: existingVideo,
+      });
+      return;
+    }
+    await deleteRenderedVideo(pautaId);
+  }
+
   const requestedEngine = payload['engine'];
   const requestedVoice = payload['voice'];
   const engineOverride =

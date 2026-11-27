@@ -147,9 +147,19 @@ export class RenderQueue {
       body: JSON.stringify(payload),
     });
 
-    const data = (await res.json().catch(() => null)) as { job?: RenderJobView; error?: string } | null;
+    const data = (await res.json().catch(() => null)) as {
+      job?: RenderJobView;
+      error?: string;
+      requiresReplace?: boolean;
+      existing?: unknown;
+    } | null;
     if (!res.ok || !data?.job) {
-      throw new Error(data?.error ?? `Falha ao enfileirar o render (HTTP ${res.status}).`);
+      // 409 de "já existe vídeo": a tela precisa dos dados para perguntar ao usuário.
+      const err = new Error(data?.error ?? `Falha ao enfileirar o render (HTTP ${res.status}).`);
+      (err as Error & { requiresReplace?: boolean; existing?: unknown }).requiresReplace =
+        data?.requiresReplace === true;
+      (err as Error & { existing?: unknown }).existing = data?.existing;
+      throw err;
     }
 
     this.jobs.update((list) => [data.job as RenderJobView, ...list.filter((j) => j.id !== data.job!.id)]);

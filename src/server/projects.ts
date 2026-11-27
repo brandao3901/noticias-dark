@@ -117,6 +117,90 @@ export async function deleteProject(id: string): Promise<boolean> {
   }
 }
 
+export interface RenderedVideoInfo {
+  exists: boolean;
+  sizeBytes: number;
+  renderedAt: string | null;
+  videoMode: string | null;
+  durationSec: number | null;
+}
+
+/** O que já existe de vídeo renderizado nesta pauta (para avisar antes de trocar). */
+export async function videoInfo(id: string): Promise<RenderedVideoInfo> {
+  const dir = projectDir(id);
+  const video = join(dir, 'video.mp4');
+  if (!existsSync(video)) {
+    return { exists: false, sizeBytes: 0, renderedAt: null, videoMode: null, durationSec: null };
+  }
+
+  let sizeBytes = 0;
+  try {
+    sizeBytes = (await stat(video)).size;
+  } catch {
+    sizeBytes = 0;
+  }
+
+  let renderedAt: string | null = null;
+  let videoMode: string | null = null;
+  let durationSec: number | null = null;
+  try {
+    const raw = await readFile(join(dir, 'render.json'), 'utf8');
+    const meta = JSON.parse(raw) as { renderedAt?: string; videoMode?: string; durationSec?: number };
+    renderedAt = meta.renderedAt ?? null;
+    videoMode = meta.videoMode ?? null;
+    durationSec = Number.isFinite(meta.durationSec) ? (meta.durationSec ?? null) : null;
+  } catch {
+    // Sem render.json: ainda assim há vídeo; a UI mostra o que sabe.
+  }
+
+  return { exists: true, sizeBytes, renderedAt, videoMode, durationSec };
+}
+
+/**
+ * Remove o vídeo renderizado (e a miniatura) movendo para `.trash`.
+ *
+ * Trocar de formato gera outro vídeo; manter o antigo no lugar faz o player
+ * servir cache velho e segura buffer na memória. Vai para a lixeira porque um
+ * render custou minutos.
+ */
+export async function deleteRenderedVideo(id: string): Promise<boolean> {
+  const dir = projectDir(id);
+  const video = join(dir, 'video.mp4');
+  if (!existsSync(video)) return false;
+
+  const trash = join(projectsRoot(), '.trash');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const target = join(trash, `${id}-video-${stamp}`);
+
+  try {
+    await mkdir(target, { recursive: true });
+    await rename(video, join(target, 'video.mp4'));
+    for (const extra of ['thumbnail.jpg', 'render.json']) {
+      const from = join(dir, extra);
+      if (existsSync(from)) {
+        await rename(from, join(target, extra)).catch(() => undefined);
+      }
+    }
+  } catch {
+    console.warn('[projects] não foi possível mover o vídeo para .trash; excluindo', id);
+    await rm(video, { force: true });
+    await rm(join(dir, 'thumbnail.jpg'), { force: true });
+  }
+
+  // A pauta deixa de apontar para um vídeo que não existe mais.
+  try {
+    const project = await readProject(id);
+    if (project?.render) {
+      const { render: _omit, ...rest } = project;
+      await writeProject(id, rest as PautaRecord);
+    }
+  } catch {
+    // Sem project.json legível: o arquivo já saiu, a UI atualiza no próximo GET.
+  }
+
+  return true;
+}
+
 export async function listProjects(): Promise<ProjectSummary[]> {
   const root = projectsRoot();
   if (!existsSync(root)) return [];

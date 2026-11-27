@@ -53,7 +53,18 @@ export function buildIllustrationPrompt(params: {
   editorial?: string;
   personality?: RadarPersonality;
 }): string {
-  const source = `${params.title ?? ''} ${params.narration}`;
+  // A imagem nasce da FALA da cena: é o que o espectador está ouvindo naquele
+  // momento. O título da matéria só entra quando a cena ainda não tem narração.
+  const fala = (params.narration ?? '').trim();
+  const base = fala.length >= 8 ? fala : (params.title ?? '').trim();
+
+  // Duas primeiras frases: o resto da cena costuma repetir ou concluir.
+  const source = base
+    .split(/(?<=[.!?])\s+/)
+    .slice(0, 2)
+    .join(' ')
+    .slice(0, 400);
+
   const semNomes = source
     .replace(/[^\p{L}\p{N}\s,]/gu, ' ')
     .split(/\s+/)

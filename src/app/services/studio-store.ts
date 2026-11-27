@@ -1924,6 +1924,14 @@ export class StudioStore {
     this.persist();
   }
 
+  /** Remove o vídeo da pauta na interface (arquivo já foi para a lixeira no servidor). */
+  clearRenderedVideo(pautaId: string): void {
+    this.pautas.update((list) =>
+      list.map((p) => (p.id === pautaId ? { ...p, render: undefined } : p)),
+    );
+    this.persist();
+  }
+
   async searchMedia(
     query: string,
     provider: 'auto' | 'wikimedia' | 'internet_archive' | 'openverse' | 'nasa' | 'pexels',
