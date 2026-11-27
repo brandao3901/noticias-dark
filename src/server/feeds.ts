@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { WEB_USER_AGENT } from './http';
 import type { FeedSourceStatus, NewsOutletFeedItem } from '../app/models/studio.models';
 
-interface ConfiguredFeed {
+export interface ConfiguredFeed {
   id: string;
   outlet: string;
   editorial: string;
@@ -400,7 +400,7 @@ function normalizeLink(rawLink: unknown): string {
   return textValue(rawLink).trim();
 }
 
-function parseFeedItems(xml: string, feed: ConfiguredFeed): NewsOutletFeedItem[] {
+export function parseFeedItems(xml: string, feed: ConfiguredFeed): NewsOutletFeedItem[] {
   const parsed = xmlParser.parse(xml) as Record<string, unknown>;
   const items: NewsOutletFeedItem[] = [];
 

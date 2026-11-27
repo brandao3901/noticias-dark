@@ -77,6 +77,51 @@ function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
+
+/**
+ * Chamada genérica de JSON no Gemini.
+ *
+ * Reaproveita cliente, cadeia de modelos e a pausa de cota já existentes, para
+ * que Radar e Motor de Retenção não dupliquem tratamento de erro.
+ */
+export async function runGeminiJson<T>(params: {
+  prompt: string;
+  schema: Record<string, unknown>;
+  temperature?: number;
+  timeoutMs?: number;
+}): Promise<{ ok: boolean; data?: T; model?: string; message?: string }> {
+  if (quotaPausedUntilMs > Date.now()) {
+    return { ok: false, message: 'Gemini pausado por cota; tente novamente em alguns minutos.' };
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) return { ok: false, message: 'GEMINI_API_KEY ausente no .env.' };
+
+  try {
+    const { value, model } = await withGeminiModelFallback((candidate) =>
+      ai.models.generateContent({
+        model: candidate,
+        contents: [{ role: 'user', parts: [{ text: params.prompt }] }],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: params.schema,
+          temperature: params.temperature ?? 0.4,
+        },
+      }),
+    );
+    const text = (value.text ?? '').trim();
+    if (!text) return { ok: false, model, message: 'Gemini devolveu resposta vazia.' };
+    return { ok: true, data: JSON.parse(text) as T, model };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isQuotaOrRateError(err)) {
+      quotaPausedUntilMs = Date.now() + 5 * 60_000;
+      return { ok: false, message: 'Cota do Gemini estourada; pausado por 5 minutos.' };
+    }
+    return { ok: false, message };
+  }
+}
+
 export function getGeminiStatus(): {
   geminiConfigured: boolean;
   geminiQuotaPaused: boolean;

@@ -1437,3 +1437,60 @@ que `dist/`, e **repete sem `--no-sandbox`** se o Chromium cair com `STATUS_BREA
 | Porta 3000 ocupada | sobe em **3001** e carrega normalmente |
 | Render dentro do app | **done**, 12,65 s, formato `cards`, voz `kokoro` |
 | Log | `logs/electron-server.log` com subida e prontidão |
+
+---
+
+## 29. Radar Global: pautas fora do Brasil (27/11/2026)
+
+Adaptação da especificação "Radar Global de Nichos" ao **nosso** stack (Angular + Node +
+Gemini). A spec original falava do PurffleShorts (Python); aqui ela foi traduzida para os
+módulos que já existem, **sem tocar no fluxo de notícias**.
+
+### 29.1 O que foi adicionado
+
+`src/server/radar.ts`:
+
+| Peça | Como funciona |
+|---|---|
+| **Radar de tendências** | Google News em 12 edições (EUA, Reino Unido, Japão, Alemanha, França, Espanha, China, Egito) + seções de ciência/tecnologia |
+| **Radar documental** | 10 veículos evergreen (ScienceDaily, Phys.org, NASA, Smithsonian, IEEE Spectrum, New Atlas, Ars Technica, Live Science, Atlas Obscura, Hakai) |
+| **Agrupamento** | títulos normalizados em tokens (sem acentos/stopwords) e Jaccard ≥ 0,45 → mesmo assunto vira **uma** pauta com N fontes |
+| **Filtro editorial** | remove promoção/varejo (Black Friday, cupom, oferta) e violência explícita, igual ao critério do canal |
+| **Nota observada** | 0–100 por fontes (30), países (20), idiomas (15), recência (20) e velocidade (15) |
+| **Nota da IA** | 8 critérios da spec em uma chamada só (top 12), com formato e personalidade sugeridos |
+| **Nota final** | 45% observado + 55% editorial, sempre separados na interface |
+| **Análise da pauta** | `POST /api/radar/analyze` → fatos, incertezas, ângulo, gancho, formato, personalidade e técnicas |
+
+Endpoints: `GET /api/radar?radar=tendencias|documental&refresh=1&ai=0` e
+`POST /api/radar/analyze`.
+
+### 29.2 Interface
+
+Aba **Radar** (entre Descoberta e Dossiê), sem mexer na aba Descoberta:
+
+- alternadores **Tendências** / **Documental** e botão **Atualizar**;
+- cartões com categoria, nº de fontes, países, idade, resumo em português (IA), duas barras
+  (dados × editorial), recomendação, formato e tom sugeridos;
+- **Produzir esta pauta** → cria a pauta com a URL de origem e leva ao Dossiê (escolha
+  continua manual, nada é produzido sem aprovação).
+
+Editorias são encartadas nas que já existem (Tecnologia/Economia/Esportes/Celebridades/Brasil)
+para não mexer nos filtros atuais.
+
+### 29.3 Prova
+
+| Teste | Resultado |
+|---|---|
+| Tendências (sem IA) | 80 pautas agrupadas, 0 feeds com erro, ~0,9 s (cache 5 min) |
+| Tendências (com IA) | 12 pautas avaliadas, formato/tom sugeridos, ~7 s |
+| Documental | 80 pautas, **0** itens de promoção (filtro ativo) |
+| Análise da pauta | responde fatos/incertos/ângulo/gancho |
+| **Regressão notícias** | `/api/discovery/rss`: 400 itens, **54/54 fontes**, inalterado |
+
+### 29.4 Próximas fases (não incluídas)
+
+1. **Motor de Retenção** no `gemini.ts`: técnicas (lacuna, quebra de expectativa, antecipação,
+   recompensas, identificação), formato narrativo e **auditoria automática** antes de liberar.
+2. **Etapas 3–4 da criação** na interface: análise da pauta + escolha automática de formato
+   visíveis antes do roteiro.
+3. **Personalidade** influenciando TTS (estilo) e formato visual (documento/cartões/fotos).

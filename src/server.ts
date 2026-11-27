@@ -14,6 +14,8 @@ import type {
   ScriptVersionMode,
 } from './app/models/studio.models';
 import { fetchAllEditorialFeeds, matchFeedsByQuery, rankViralItems } from './server/feeds';
+import { analyzeRadarTopic, buildRadar } from './server/radar';
+import type { RadarScope } from './app/models/studio.models';
 import {
   generateStructuredShortScript,
   geminiTtsStatus,
@@ -254,6 +256,54 @@ app.post('/api/kokoro/voice', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Falha ao salvar a voz.' });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Radar Global: pautas fora do Brasil (preserva o módulo de notícias)
+// ---------------------------------------------------------------------------
+
+app.get('/api/radar', async (req, res) => {
+  const scope: RadarScope = req.query['radar'] === 'documental' ? 'documental' : 'tendencias';
+  const forceRefresh = req.query['refresh'] === '1';
+  const withAi = req.query['ai'] !== '0';
+
+  try {
+    const radar = await buildRadar({ scope, forceRefresh, withAi });
+    res.json({ radar: scope, ...radar });
+  } catch (err) {
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Falha ao consultar o Radar Global.',
+    });
+  }
+});
+
+app.post('/api/radar/analyze', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const title = typeof body['title'] === 'string' ? body['title'].trim() : '';
+  if (!title) {
+    res.status(400).json({ error: 'Informe o título da pauta.' });
+    return;
+  }
+
+  const urls = Array.isArray(body['urls'])
+    ? (body['urls'] as unknown[]).filter((value): value is string => typeof value === 'string').slice(0, 4)
+    : [];
+  const excerpts = Array.isArray(body['excerpts'])
+    ? (body['excerpts'] as unknown[]).filter((value): value is string => typeof value === 'string').slice(0, 4)
+    : [];
+
+  const result = await analyzeRadarTopic({
+    title,
+    urls,
+    excerpts,
+    category: typeof body['category'] === 'string' ? body['category'] : undefined,
+  });
+
+  if (!result.ok) {
+    res.status(409).json({ error: result.message ?? 'Não foi possível analisar a pauta.' });
+    return;
+  }
+  res.json({ ok: true, analysis: result.analysis });
 });
 
 app.post('/api/tts/preview', async (req, res) => {

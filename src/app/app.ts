@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { MatIconModule } from '@angular/material/icon';
 import { DiscoveryView } from './components/discovery-view';
 import { DossierView } from './components/dossier-view';
+import { RadarView } from './components/radar-view';
 import { MemoryGuard } from './components/memory-guard';
 import { MediaVoiceView } from './components/media-voice-view';
 import { ScriptView } from './components/script-view';
@@ -10,7 +11,7 @@ import { StudioQcView } from './components/studio-qc-view';
 import { SpeechPreview } from './services/speech-preview';
 import { StudioStore } from './services/studio-store';
 
-type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
+type StudioTab = 'discovery' | 'radar' | 'dossier' | 'script' | 'media' | 'studio';
 
 @Component({
   selector: 'app-root',
@@ -19,6 +20,7 @@ type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
     DatePipe,
     DiscoveryView,
     DossierView,
+    RadarView,
     MemoryGuard,
     ScriptView,
     MediaVoiceView,
@@ -49,6 +51,16 @@ type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
               [class.underline-offset-8]="activeTab() === 'discovery'"
             >
               Descoberta
+            </button>
+            <button
+              type="button"
+              (click)="activeTab.set('radar')"
+              class="py-1 transition-colors whitespace-nowrap shrink-0 hover:text-slate-100"
+              [class.text-slate-50]="activeTab() === 'radar'"
+              [class.underline]="activeTab() === 'radar'"
+              [class.underline-offset-8]="activeTab() === 'radar'"
+            >
+              Radar
             </button>
             <button
               type="button"
@@ -108,6 +120,7 @@ type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
       <!-- Navegação móvel compacta -->
       <div class="flex md:hidden items-center gap-2 overflow-x-auto border-b border-white/10 bg-[#111620] px-4 py-2 text-xs">
         <button type="button" (click)="activeTab.set('discovery')" class="px-2.5 py-1 rounded whitespace-nowrap" [class.bg-white/10]="activeTab() === 'discovery'">Descoberta</button>
+          <button type="button" (click)="activeTab.set('radar')" class="px-2.5 py-1 rounded whitespace-nowrap" [class.bg-white/10]="activeTab() === 'radar'">Radar</button>
         <button type="button" (click)="activeTab.set('dossier')" class="px-2.5 py-1 rounded whitespace-nowrap" [class.bg-white/10]="activeTab() === 'dossier'">Dossiê</button>
         <button type="button" (click)="activeTab.set('script')" class="px-2.5 py-1 rounded whitespace-nowrap" [class.bg-white/10]="activeTab() === 'script'">Roteiro</button>
         <button type="button" (click)="activeTab.set('media')" class="px-2.5 py-1 rounded whitespace-nowrap" [class.bg-white/10]="activeTab() === 'media'">Mídia e Voz</button>
@@ -197,6 +210,9 @@ type StudioTab = 'discovery' | 'dossier' | 'script' | 'media' | 'studio';
                 (navigateToDossier)="activeTab.set('dossier')"
                 (navigateToStudio)="activeTab.set('studio')"
               />
+            }
+            @case ('radar') {
+              <app-radar-view (created)="activeTab.set('dossier')" />
             }
             @case ('dossier') {
               <app-dossier-view (goToScript)="activeTab.set('script')" />

@@ -10,6 +10,89 @@ export type PipelineStage =
   | 'PUBLISHED'
   | 'REJECTED';
 
+
+// ---------------------------------------------------------------------------
+// Radar Global (pautas fora do Brasil + avaliação)
+// ---------------------------------------------------------------------------
+
+export type RadarScope = 'tendencias' | 'documental';
+
+export interface RadarArticle {
+  id: string;
+  title: string;
+  url: string;
+  outlet: string;
+  country: string;
+  language: string;
+  publishedAt: string;
+  excerpt: string;
+  category: string;
+}
+
+export interface RadarScores {
+  interesse: number;
+  crescimento: number;
+  concorrencia: number;
+  oportunidade: number;
+  narrativo: number;
+  visual: number;
+  confiabilidade: number;
+  relevanciaBr: number;
+}
+
+export type RadarFormat =
+  | 'noticia'
+  | 'minidocumentario'
+  | 'curiosidade'
+  | 'investigativa'
+  | 'descoberta';
+
+export type RadarPersonality =
+  | 'documentario'
+  | 'misterioso'
+  | 'impactante'
+  | 'explicativo'
+  | 'jornalistico';
+
+export interface RadarClusterItem {
+  id: string;
+  title: string;
+  summary: string;
+  category: string;
+  countries: string[];
+  languages: string[];
+  publishedAt: string;
+  articles: RadarArticle[];
+  /** Dados medidos (não é opinião da IA). */
+  observed: {
+    fontes: number;
+    paises: number;
+    idiomas: number;
+    idadeHoras: number;
+    score: number;
+  };
+  /** Julgamento editorial da IA (separado do observado, de propósito). */
+  ai?: {
+    scores: RadarScores;
+    total: number;
+    recomendacao: string;
+    categoria?: string;
+    formato: RadarFormat;
+    personalidade: RadarPersonality;
+    resumo: string;
+  };
+  score: number;
+}
+
+export interface RadarResponse {
+  radar: RadarScope;
+  generatedAt: string;
+  aiAvailable: boolean;
+  message?: string;
+  feedErrors: number;
+  items: RadarClusterItem[];
+}
+
 export type ScriptVersionMode = 'rapido' | 'short' | 'expanded';
 
 export type EditorialCategory =
