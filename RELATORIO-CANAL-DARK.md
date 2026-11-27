@@ -1940,3 +1940,25 @@ O 409 de "já existe vídeo" apareceu no meio dos testes e **funcionou**: sem `r
 - Voz local (Kokoro) e geração de imagem por IA **não viajam** no pacote: dependem de Python +
   modelos. O portátil usa Gemini (chave no `.env` ao lado do .exe) ou Edge.
 - O `.exe` único precisa de `--no-sandbox` nesta máquina; a pasta resolve isso pelo atalho.
+
+### 40.5 Kokoro no pacote (correção)
+
+O portátil abria com "Modelos ausentes": os modelos do Kokoro não viajavam no pacote.
+
+- `extraResources` passou a incluir **kokoro-v1.0.onnx (310 MB)**, **voices-v1.0.bin (27 MB)**,
+  **voz_canal.npy** e `config.json` — todos em `resources/`.
+- `electron/main.mjs` exporta `CANAL_DARK_ROOT=resources`, então `findProjectRoot()` acha
+  `resources/python/tts.py` e os modelos ao lado.
+- **Requisito**: o Kokoro roda em Python. O pacote leva os scripts (`resources/python`), mas usa o
+  **Python instalado na máquina** (com `kokoro-onnx`, `onnxruntime`, `espeakng-loader`). Sem Python,
+  a voz cai para Gemini/Edge automaticamente.
+
+Verificado no pacote (execução real):
+
+| Teste | Resultado |
+|---|---|
+| `/api/kokoro/state` | `modelsReady: true` |
+| `/api/config/status` | `kokoro.modelsReady: true` |
+| Render com `engine=kokoro, voice=blend` | **done** — `render.json` registra `engine: kokoro · voice: blend · model: kokoro-onnx` |
+
+Tamanhos: pasta **1.051 MB** · `.exe` único **491 MB**.

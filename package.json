@@ -49,6 +49,18 @@
       {
         "from": "config.json",
         "to": "config.json"
+      },
+      {
+        "from": "kokoro-v1.0.onnx",
+        "to": "kokoro-v1.0.onnx"
+      },
+      {
+        "from": "voices-v1.0.bin",
+        "to": "voices-v1.0.bin"
+      },
+      {
+        "from": "voz_canal.npy",
+        "to": "voz_canal.npy"
       }
     ],
     "win": {

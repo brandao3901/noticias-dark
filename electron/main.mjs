@@ -160,6 +160,8 @@ function startServer(port) {
             FFPROBE_BIN: join(process.resourcesPath, 'ffmpeg', 'ffprobe.exe'),
             CANAL_DARK_WORK_DIR: join(dadosPortateis(), 'render-tmp'),
             CANAL_DARK_CONFIG_DIR: dadosPortateis(),
+            // Raiz do Kokoro no pacote: resources/ guarda python/ e os modelos.
+            CANAL_DARK_ROOT: process.resourcesPath,
           }
         : {}),
     },
